@@ -1,145 +1,178 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
-// EXPANDED SOUND LIBRARY (Music + Ambience)
+// RELIABLE MP3 LINKS
 const SOUNDS = [
-  // NATURE
-  { id: 'rain', emoji: '🌧️', name: 'Rain', url: 'https://actions.google.com/sounds/v1/weather/rain_heavy_loud.ogg' },
-  { id: 'thunder', emoji: '⛈️', name: 'Thunder', url: 'https://actions.google.com/sounds/v1/weather/thunderstorm.ogg' },
-  { id: 'ocean', emoji: '🌊', name: 'Waves', url: 'https://actions.google.com/sounds/v1/water/waves_crashing_on_rock_beach.ogg' },
-  { id: 'birds', emoji: '🐦', name: 'Birds', url: 'https://actions.google.com/sounds/v1/animals/birds_forest_morning.ogg' },
-  { id: 'night', emoji: '🦗', name: 'Crickets', url: 'https://actions.google.com/sounds/v1/animals/crickets.ogg' },
-  
-  // MUSICAL TEXTURES (Using reliable looping samples)
-  { id: 'wind', emoji: '🍃', name: 'Wind', url: 'https://actions.google.com/sounds/v1/weather/wind_blowing.ogg' },
+  { id: 'rain', label: 'RAIN', url: 'https://cdn.pixabay.com/audio/2022/07/04/audio_306283b7e7.mp3' }, // Pixabay Rain
+  { id: 'thunder', label: 'STORM', url: 'https://cdn.pixabay.com/audio/2021/08/09/audio_03d6f35b26.mp3' }, // Pixabay Thunder
+  { id: 'piano', label: 'PIANO', url: 'https://cdn.pixabay.com/audio/2022/03/10/audio_c8c8a73467.mp3' }, // Sad Piano Loop
+  { id: 'fire', label: 'FIRE', url: 'https://cdn.pixabay.com/audio/2021/09/06/audio_472f9156a5.mp3' }  // Crackling Fire
 ]
 
 function App() {
-  const [volumes, setVolumes] = useState({})
-  const [timeOfDay, setTimeOfDay] = useState('day') // morning, day, evening, night
-  const [clock, setClock] = useState('')
+  const [volumes, setVolumes] = useState({ rain: 0, thunder: 0, piano: 0, fire: 0 })
+  const [isNight, setIsNight] = useState(false)
   const audioRefs = useRef({})
+  const canvasRef = useRef(null)
 
-  // 1. TIME ENGINE: Check real clock every minute
+  // --- AUDIO ENGINE ---
   useEffect(() => {
-    const checkTime = () => {
-      const now = new Date()
-      const hour = now.getHours()
-      const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      setClock(timeString)
-
-      // Determine "Vibe" based on hour
-      let vibe = 'day'
-      if (hour >= 5 && hour < 11) vibe = 'morning'
-      else if (hour >= 11 && hour < 17) vibe = 'day'
-      else if (hour >= 17 && hour < 21) vibe = 'evening'
-      else vibe = 'night'
-
-      setTimeOfDay(vibe)
-      
-      // Inject the class into the <body> tag for global CSS changes
-      document.body.className = vibe
-    }
-
-    checkTime() // Run immediately
-    const interval = setInterval(checkTime, 60000) // Run every minute
-    return () => clearInterval(interval)
-  }, [])
-
-  // 2. AUDIO ENGINE
-  useEffect(() => {
-    // Initialize volumes state
-    const volState = {}
-    SOUNDS.forEach(s => volState[s.id] = 0)
-    setVolumes(volState)
-
-    // Create Audio Objects
-    SOUNDS.forEach(sound => {
-      const audio = new Audio(sound.url)
+    // 1. Initialize Audio
+    SOUNDS.forEach(s => {
+      const audio = new Audio(s.url)
       audio.loop = true
       audio.volume = 0
-      audioRefs.current[sound.id] = audio
+      audioRefs.current[s.id] = audio
     })
 
+    // 2. Check Time for Day/Night mode
+    const h = new Date().getHours()
+    setIsNight(h >= 19 || h < 6) // Night is 7PM to 6AM
+
     return () => {
-      SOUNDS.forEach(s => audioRefs.current[s.id]?.pause())
+      // Cleanup
+      Object.values(audioRefs.current).forEach(a => a.pause())
     }
   }, [])
 
-  const handleVolumeChange = (id, val) => {
-    const newVol = parseFloat(val)
-    setVolumes(prev => ({ ...prev, [id]: newVol }))
+  const handleVolume = (id, val) => {
+    const v = parseFloat(val)
+    setVolumes(prev => ({ ...prev, [id]: v }))
     
     const audio = audioRefs.current[id]
     if (audio) {
-      if (newVol > 0 && audio.paused) audio.play()
-      if (newVol === 0) audio.pause()
-      audio.volume = newVol
+      if (v > 0 && audio.paused) audio.play().catch(e => console.log("Audio play failed:", e))
+      if (v === 0) audio.pause()
+      audio.volume = v
     }
   }
 
-  const muteAll = () => {
-    const reset = {}
-    SOUNDS.forEach(s => {
-      reset[s.id] = 0
-      if (audioRefs.current[s.id]) {
-        audioRefs.current[s.id].pause()
-        audioRefs.current[s.id].volume = 0
-      }
-    })
-    setVolumes(reset)
-  }
+  // --- CANVAS PHYSICS ENGINE (The Visuals) ---
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    let animationFrameId
+    
+    // Set Canvas Size
+    const resize = () => {
+      canvas.width = window.innerWidth
+      canvas.height = window.innerHeight
+    }
+    window.addEventListener('resize', resize)
+    resize()
 
-  // Preset: "Auto-Tune" based on time
-  const autoVibe = () => {
-    muteAll()
-    // Small delay to let mute finish
-    setTimeout(() => {
-      if (timeOfDay === 'night') {
-        handleVolumeChange('night', 0.6) // Crickets
-        handleVolumeChange('wind', 0.3) // Wind
-      } else if (timeOfDay === 'morning') {
-        handleVolumeChange('birds', 0.5)
-        handleVolumeChange('rain', 0.2)
-      } else {
-        handleVolumeChange('ocean', 0.5)
-        handleVolumeChange('wind', 0.2)
+    // Particle Systems
+    const raindrops = []
+    const stars = []
+
+    // Initialize Stars (Static)
+    for (let i = 0; i < 100; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 2,
+        opacity: Math.random()
+      })
+    }
+
+    const render = () => {
+      // 1. Clear Screen (with trail effect for motion blur)
+      ctx.fillStyle = isNight ? '#050510' : '#4a6fa5' // Deep Night vs Blue Day
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+      // 2. Draw Stars (If Night)
+      if (isNight) {
+        ctx.fillStyle = 'white'
+        stars.forEach(star => {
+          ctx.globalAlpha = star.opacity
+          ctx.beginPath()
+          ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2)
+          ctx.fill()
+        })
       }
-    }, 100)
-  }
+
+      // 3. Draw Rain (Only if volume > 0)
+      if (volumes.rain > 0) {
+        // Add new drops based on volume intensity
+        const intensity = volumes.rain * 5 // More volume = more drops
+        for (let i = 0; i < intensity; i++) {
+          raindrops.push({
+            x: Math.random() * canvas.width,
+            y: -20, // Start above screen
+            speed: Math.random() * 10 + 10 + (volumes.rain * 10), // Faster if louder
+            length: Math.random() * 20 + 10
+          })
+        }
+
+        ctx.strokeStyle = 'rgba(174, 194, 224, 0.5)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        
+        // Loop backwards to remove old drops easily
+        for (let i = raindrops.length - 1; i >= 0; i--) {
+          const drop = raindrops[i]
+          
+          // Draw Line
+          ctx.moveTo(drop.x, drop.y)
+          ctx.lineTo(drop.x, drop.y + drop.length)
+          
+          // Move Drop
+          drop.y += drop.speed
+
+          // Remove if off screen
+          if (drop.y > canvas.height) {
+            raindrops.splice(i, 1)
+          }
+        }
+        ctx.stroke()
+      }
+
+      animationFrameId = window.requestAnimationFrame(render)
+    }
+
+    render()
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId)
+      window.removeEventListener('resize', resize)
+    }
+  }, [volumes.rain, isNight]) // Re-run logic if rain volume changes
 
   return (
-    <div className="mixer-board">
-      <div className="header">
-        <h1>Lofi Sync</h1>
-        <div className="time-badge">{timeOfDay} • {clock}</div>
-      </div>
+    <>
+      <canvas id="bg-canvas" ref={canvasRef}></canvas>
+      
+      <div className="interface">
+        <h1>THE VOID</h1>
+        <div className="status">
+          {isNight ? "NIGHT MODE ACTIVE" : "DAY MODE ACTIVE"} • {Math.floor(volumes.rain * 100)}% PRECIPITATION
+        </div>
 
-      <div className="tracks">
-        {SOUNDS.map(sound => (
-          <div key={sound.id} className="track">
-            <div className={`icon ${volumes[sound.id] > 0 ? 'active' : ''}`}>
-              {sound.emoji}
-            </div>
+        {SOUNDS.map(s => (
+          <div key={s.id} className="track-row">
+            <div className="label">{s.label}</div>
             <input 
               type="range" 
               min="0" 
               max="1" 
               step="0.01"
-              value={volumes[sound.id] || 0}
-              onChange={(e) => handleVolumeChange(sound.id, e.target.value)} 
+              value={volumes[s.id]}
+              onChange={(e) => handleVolume(s.id, e.target.value)}
             />
           </div>
         ))}
-      </div>
 
-      <div style={{ marginTop: '2rem', display: 'flex', gap: '10px', justifyContent: 'center' }}>
-        <button className="mute-all" onClick={muteAll}>Silence</button>
-        <button className="mute-all" onClick={autoVibe} style={{background: 'white', color: 'black'}}>
-          ✨ Auto-Mix
+        <button 
+          className="mute-btn" 
+          onClick={() => {
+            setVolumes({ rain: 0, thunder: 0, piano: 0, fire: 0 })
+            Object.values(audioRefs.current).forEach(a => a.pause())
+          }}
+        >
+          SILENCE ALL
         </button>
       </div>
-    </div>
+    </>
   )
 }
 
