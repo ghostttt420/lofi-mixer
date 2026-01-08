@@ -1,197 +1,235 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
-// ASSETS
-const SOUND_SOURCES = [
-  { id: 'rain', name: 'RAIN', url: 'https://cdn.pixabay.com/audio/2022/07/04/audio_306283b7e7.mp3' }, 
-  { id: 'thunder', name: 'STORM', url: 'https://cdn.pixabay.com/audio/2021/08/09/audio_03d6f35b26.mp3' },
-  { id: 'city', name: 'CITY', url: 'https://cdn.pixabay.com/audio/2021/09/06/audio_0c946f0470.mp3' }, 
-  { id: 'music', name: 'SYNTH', url: 'https://cdn.pixabay.com/audio/2022/03/10/audio_c8c8a73467.mp3' } 
-]
-
 function App() {
   const [started, setStarted] = useState(false)
-  const [statusText, setStatusText] = useState("INITIALIZE SYSTEM")
-  const [volumes, setVolumes] = useState({ rain: 0.5, thunder: 0, city: 0, music: 0 }) 
-  
-  const audioCtxRef = useRef(null)
-  const sourcesRef = useRef({})
-  const gainsRef = useRef({})
-  const buffersRef = useRef({})
+  const [isNight, setIsNight] = useState(false)
+  // Store volume levels (0.0 to 1.0)
+  const [vols, setVols] = useState({ rain: 0, drone: 0, rumble: 0 })
+
+  const audioCtx = useRef(null)
+  const nodes = useRef({}) // Store audio nodes to control them later
   const canvasRef = useRef(null)
 
-  // 1. CLICK TO START (Required by Browsers)
-  const initAudioSystem = async () => {
-    setStatusText("LOADING AUDIO...")
-    
-    // Create Context
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    audioCtxRef.current = new Ctx()
-    const ctx = audioCtxRef.current
+  // --- AUDIO GENERATORS (PURE MATH) ---
 
-    // Load Sounds
-    for (let sound of SOUND_SOURCES) {
-      try {
-        const response = await fetch(sound.url)
-        const arrayBuffer = await response.arrayBuffer()
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
-        buffersRef.current[sound.id] = audioBuffer
-      } catch (err) {
-        console.error("Audio Load Error", err)
-      }
+  // 1. Create Pink Noise (sounds like Rain/Water)
+  const createPinkNoise = (ctx) => {
+    const bufferSize = 2 * ctx.sampleRate; // 2 seconds buffer
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = buffer.getChannelData(0);
+    let b0, b1, b2, b3, b4, b5, b6;
+    b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0;
+    
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      output[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+      output[i] *= 0.11; // compensate for gain
+      b6 = white * 0.115926;
+    }
+    
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    noise.loop = true;
+    return noise;
+  }
+
+  // 2. Create Brown Noise (Sounds like Rumble/Thunder)
+  const createBrownNoise = (ctx) => {
+    const bufferSize = 2 * ctx.sampleRate;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = buffer.getChannelData(0);
+    let lastOut = 0;
+    for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        output[i] = (lastOut + (0.02 * white)) / 1.02;
+        lastOut = output[i];
+        output[i] *= 3.5; 
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    noise.loop = true;
+    return noise;
+  }
+
+  // --- INITIALIZE ENGINE ---
+  const startEngine = () => {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    const ctx = new Ctx()
+    audioCtx.current = ctx
+
+    // MASTER GAIN (Volume Control)
+    const rainGain = ctx.createGain(); rainGain.gain.value = 0;
+    const droneGain = ctx.createGain(); droneGain.gain.value = 0;
+    const rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0;
+
+    // 1. SETUP RAIN (Pink Noise)
+    const rainSrc = createPinkNoise(ctx);
+    rainSrc.connect(rainGain);
+    rainGain.connect(ctx.destination);
+    rainSrc.start(0);
+
+    // 2. SETUP DRONE (Oscillators)
+    // We use 2 oscillators slightly detuned for a rich sound
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    osc1.type = 'sine'; osc1.frequency.value = 110; // A2
+    osc2.type = 'triangle'; osc2.frequency.value = 112; // Slightly detuned
+    
+    const droneFilter = ctx.createBiquadFilter();
+    droneFilter.type = 'lowpass';
+    droneFilter.frequency.value = 400; // Muffle it a bit
+
+    osc1.connect(droneFilter);
+    osc2.connect(droneFilter);
+    droneFilter.connect(droneGain);
+    droneGain.connect(ctx.destination);
+    
+    osc1.start(0);
+    osc2.start(0);
+
+    // 3. SETUP RUMBLE (Brown Noise)
+    const rumbleSrc = createBrownNoise(ctx);
+    rumbleSrc.connect(rumbleGain);
+    rumbleGain.connect(ctx.destination);
+    rumbleSrc.start(0);
+
+    // Store nodes to control volume later
+    nodes.current = {
+        rain: rainGain,
+        drone: droneGain,
+        rumble: rumbleGain,
+        osc1, osc2 // Store oscs to change pitch based on time
     }
 
-    // Play Sounds
-    SOUND_SOURCES.forEach(sound => {
-      const buffer = buffersRef.current[sound.id]
-      if (buffer) {
-        const source = ctx.createBufferSource()
-        source.buffer = buffer
-        source.loop = true
-        
-        const gainNode = ctx.createGain()
-        gainNode.gain.value = volumes[sound.id]
-        
-        source.connect(gainNode)
-        gainNode.connect(ctx.destination)
-        source.start(0)
-        
-        sourcesRef.current[sound.id] = source
-        gainsRef.current[sound.id] = gainNode
-      }
-    })
+    // CHECK TIME OF DAY
+    const hour = new Date().getHours();
+    const night = hour >= 18 || hour < 6;
+    setIsNight(night);
+    
+    // Change drone pitch if night (lower/darker)
+    if (night) {
+        osc1.frequency.setValueAtTime(55, ctx.currentTime); // A1 (Lower)
+        osc2.frequency.setValueAtTime(56, ctx.currentTime);
+    }
 
     setStarted(true)
   }
 
-  // 2. VOLUME HANDLE
-  const updateVolume = (id, val) => {
-    const newVol = parseFloat(val)
-    setVolumes(prev => ({ ...prev, [id]: newVol }))
-    if (gainsRef.current[id]) {
-      gainsRef.current[id].gain.setTargetAtTime(newVol, audioCtxRef.current.currentTime, 0.1)
+  const handleVol = (type, val) => {
+    const v = parseFloat(val);
+    setVols(prev => ({...prev, [type]: v}));
+    
+    // Smooth volume transition
+    if (audioCtx.current && nodes.current[type]) {
+        nodes.current[type].gain.setTargetAtTime(v, audioCtx.current.currentTime, 0.1);
     }
   }
 
-  // 3. CANVAS ENGINE (Rain & Stars)
+  // --- VISUALS (CANVAS) ---
   useEffect(() => {
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    let animationId
-    let lightningTimer = 0
-    let stars = []
-    let rainDrops = []
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    let frameId;
+    
+    // Resize
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-    // Setup Canvas
-    const resize = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
-      stars = []
-      for(let i=0; i<100; i++) {
-        stars.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
-          size: Math.random() * 2,
-          opacity: Math.random()
-        })
-      }
-    }
-    window.addEventListener('resize', resize)
-    resize()
+    const particles = [];
+    // Initialize Particles
+    for(let i=0; i<100; i++) particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        s: Math.random() * 2 + 0.5, // speed
+        l: Math.random() * 20 + 5   // length
+    });
 
-    const render = () => {
-      // Clear
-      ctx.fillStyle = '#050510'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
+    const draw = () => {
+        // Background color based on time
+        ctx.fillStyle = isNight ? '#050510' : '#001000'; // Dark Blue vs Matrix Dark
+        ctx.fillRect(0,0, canvas.width, canvas.height);
 
-      // Lightning Logic
-      if (volumes.thunder > 0.3 && Math.random() < 0.005 * volumes.thunder) lightningTimer = 10
-      if (lightningTimer > 0) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${lightningTimer * 0.05})`
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        lightningTimer--
-      }
-
-      // Draw Stars
-      ctx.fillStyle = 'white'
-      stars.forEach(s => {
-        ctx.globalAlpha = 0.3 + Math.random() * 0.5
-        ctx.beginPath()
-        ctx.arc(s.x, s.y, s.size, 0, Math.PI*2)
-        ctx.fill()
-      })
-      ctx.globalAlpha = 1.0
-
-      // Draw Rain
-      if (volumes.rain > 0) {
-        // Spawn Drops
-        const count = Math.floor(volumes.rain * 10)
-        for(let i=0; i<count; i++) {
-          rainDrops.push({
-            x: Math.random() * canvas.width,
-            y: -20,
-            speed: 15 + Math.random() * 10,
-            len: 10 + Math.random() * 20
-          })
-        }
+        // Draw Rain (if volume > 0)
+        // We always draw a bit, but opacity depends on volume
+        ctx.strokeStyle = '#0f0';
+        ctx.lineWidth = 1;
         
-        ctx.strokeStyle = '#00f0ff' // Neon Blue Rain
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        for(let i=rainDrops.length-1; i>=0; i--) {
-          let p = rainDrops[i]
-          ctx.moveTo(p.x, p.y)
-          ctx.lineTo(p.x, p.y + p.len)
-          p.y += p.speed
-          if (p.y > canvas.height) rainDrops.splice(i, 1)
-        }
-        ctx.stroke()
-      }
+        particles.forEach(p => {
+            // Visualize Audio: Rain volume controls opacity
+            const opacity = vols.rain > 0 ? vols.rain : 0.1;
+            ctx.globalAlpha = opacity;
+            
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p.x, p.y + p.l);
+            ctx.stroke();
 
-      animationId = requestAnimationFrame(render)
+            // Move
+            p.y += p.s + (vols.rain * 10); // Faster if louder
+            if (p.y > canvas.height) {
+                p.y = -20;
+                p.x = Math.random() * canvas.width;
+            }
+        });
+
+        // Draw Drone "Pulse" (if drone volume > 0)
+        if (vols.drone > 0) {
+            ctx.globalAlpha = vols.drone * 0.2;
+            const center = canvas.height / 2;
+            ctx.fillStyle = '#0f0';
+            ctx.fillRect(0, center - (vols.drone * 100), canvas.width, vols.drone * 200);
+        }
+
+        frameId = requestAnimationFrame(draw);
     }
-    render()
-    return () => {
-      cancelAnimationFrame(animationId)
-      window.removeEventListener('resize', resize)
-    }
-  }, [volumes])
+    
+    draw();
+    return () => cancelAnimationFrame(frameId);
+  }, [vols, isNight]);
 
   return (
     <>
       <canvas ref={canvasRef} />
-
-      {/* OVERLAY - Shows until started */}
+      
       {!started && (
         <div className="overlay">
-          <h1 style={{marginBottom: '40px'}}>SONIC SANCTUARY</h1>
-          <button className="start-btn" onClick={initAudioSystem}>
-            {statusText}
+          <button className="btn-main" onClick={startEngine}>
+            Initialize Procedural Engine
           </button>
         </div>
       )}
 
-      {/* DASHBOARD - Shows after started */}
       {started && (
-        <div className="dashboard-container">
-          <div className="dashboard">
-            <h1>ATMOSPHERE</h1>
-            <div className="subtitle">System Active</div>
-            
-            <div className="controls">
-              {SOUND_SOURCES.map(s => (
-                <div key={s.id} className="control-row">
-                  <div className="label">{s.name}</div>
-                  <input 
-                    type="range" 
-                    min="0" 
-                    max="1" 
-                    step="0.01" 
-                    value={volumes[s.id]}
-                    onChange={(e) => updateVolume(s.id, e.target.value)}
-                  />
-                </div>
-              ))}
+        <div className="app-container">
+          <div className="control-box">
+            <h1>GENERATOR v1.0</h1>
+            <div className="status-bar">
+               MODE: {isNight ? "NIGHT (LOW FREQ)" : "DAY (HIGH FREQ)"}
+            </div>
+
+            <div className="slider-row">
+              <span className="label">RAIN (PINK NOISE)</span>
+              <input type="range" min="0" max="1" step="0.01" 
+                     value={vols.rain} onChange={e => handleVol('rain', e.target.value)} />
+            </div>
+
+            <div className="slider-row">
+              <span className="label">SYNTH (OSC)</span>
+              <input type="range" min="0" max="0.5" step="0.01" 
+                     value={vols.drone} onChange={e => handleVol('drone', e.target.value)} />
+            </div>
+
+            <div className="slider-row">
+              <span className="label">RUMBLE (BROWN NOISE)</span>
+              <input type="range" min="0" max="1" step="0.01" 
+                     value={vols.rumble} onChange={e => handleVol('rumble', e.target.value)} />
             </div>
           </div>
         </div>
