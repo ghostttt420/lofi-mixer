@@ -5,12 +5,11 @@ function App() {
   const [started, setStarted] = useState(false)
   const [timeMode, setTimeMode] = useState('day') 
   
-  // FIX: Safety Merge to prevent crash from old save files
+  // 1. STATE (For UI Sliders)
   const [vols, setVols] = useState(() => {
     try {
       const saved = localStorage.getItem('lofi-vols')
       const parsed = saved ? JSON.parse(saved) : {}
-      // Merge saved values with defaults to ensure no "undefined" crashes
       return { 
         rain: parsed.rain || 0, 
         drone: parsed.drone || 0, 
@@ -25,6 +24,10 @@ function App() {
     }
   })
 
+  // 2. REFS (For Audio Engine - "The Live Whiteboard")
+  // We mirror state here so the Audio Scheduler can read live values without freezing.
+  const volsRef = useRef(vols)
+
   const audioCtx = useRef(null)
   const nodes = useRef({}) 
   const analyserRef = useRef(null) 
@@ -35,14 +38,15 @@ function App() {
   const schedulerTimer = useRef(null)
   const tempo = 80 
 
+  // Keep Ref in sync with State
   useEffect(() => {
+    volsRef.current = vols
     localStorage.setItem('lofi-vols', JSON.stringify(vols))
   }, [vols])
 
   // =========================================================
   // AUDIO HELPERS
   // =========================================================
-
   const createPinkNoise = (ctx) => {
     const bufferSize = 2 * ctx.sampleRate;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -79,7 +83,6 @@ function App() {
   // =========================================================
   // INSTRUMENTS
   // =========================================================
-
   const playKick = (ctx, time, vol) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -173,11 +176,10 @@ function App() {
   // =========================================================
   // ENGINE LOGIC
   // =========================================================
-
   const startAmbientLayers = (ctx, dest) => {
     // Rain
     const rainSrc = createPinkNoise(ctx);
-    const rainGain = ctx.createGain(); rainGain.gain.value = vols.rain || 0;
+    const rainGain = ctx.createGain(); rainGain.gain.value = volsRef.current.rain;
     rainSrc.connect(rainGain).connect(dest);
     rainSrc.start(0);
 
@@ -188,7 +190,7 @@ function App() {
     let baseFreq = hour > 18 || hour < 6 ? 55 : 110; 
     osc1.frequency.value = baseFreq; osc2.frequency.value = baseFreq + 2;
     const droneFilter = ctx.createBiquadFilter(); droneFilter.type = 'lowpass'; droneFilter.frequency.value = 400;
-    const droneGain = ctx.createGain(); droneGain.gain.value = vols.drone || 0;
+    const droneGain = ctx.createGain(); droneGain.gain.value = volsRef.current.drone;
     osc1.connect(droneFilter); osc2.connect(droneFilter);
     droneFilter.connect(droneGain).connect(dest);
     osc1.start(0); osc2.start(0);
@@ -196,13 +198,13 @@ function App() {
     // Rumble
     const rumbleSrc = createPinkNoise(ctx);
     const rumbleFilter = ctx.createBiquadFilter(); rumbleFilter.type = 'lowpass'; rumbleFilter.frequency.value = 350;
-    const rumbleGain = ctx.createGain(); rumbleGain.gain.value = vols.rumble || 0;
+    const rumbleGain = ctx.createGain(); rumbleGain.gain.value = volsRef.current.rumble;
     rumbleSrc.connect(rumbleFilter).connect(rumbleGain).connect(dest);
     rumbleSrc.start(0);
 
     // Vinyl
     const vinylSrc = createVinylCrackle(ctx);
-    const vinylGain = ctx.createGain(); vinylGain.gain.value = vols.vinyl || 0;
+    const vinylGain = ctx.createGain(); vinylGain.gain.value = volsRef.current.vinyl;
     const vinylFilter = ctx.createBiquadFilter(); vinylFilter.type = 'highpass'; vinylFilter.frequency.value = 2000;
     vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
     vinylSrc.start(0);
@@ -213,17 +215,21 @@ function App() {
     nodes.current.vinyl = vinylGain;
   }
 
+  // THE BRAIN: Reads from REF to get live slider values
   const scheduleNote = (beatNumber, time) => {
-    if (vols.beats > 0) {
-        if (beatNumber === 0 || beatNumber === 10) playKick(audioCtx.current, time, vols.beats);
-        if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, time, vols.beats);
-        if (beatNumber % 2 === 0) playHiHat(audioCtx.current, time, vols.beats);
-        else if (Math.random() > 0.5) playHiHat(audioCtx.current, time, vols.beats * 0.5); 
+    // USE volsRef.current here!
+    const currentVols = volsRef.current;
+
+    if (currentVols.beats > 0) {
+        if (beatNumber === 0 || beatNumber === 10) playKick(audioCtx.current, time, currentVols.beats);
+        if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, time, currentVols.beats);
+        if (beatNumber % 2 === 0) playHiHat(audioCtx.current, time, currentVols.beats);
+        else if (Math.random() > 0.5) playHiHat(audioCtx.current, time, currentVols.beats * 0.5); 
     }
     if (beatNumber === 0) {
         const barIndex = Math.floor(Date.now() / 2000); 
-        if (vols.chords > 0) playChord(audioCtx.current, time, vols.chords, barIndex);
-        if (vols.bass > 0) playBass(audioCtx.current, time, vols.bass, barIndex);
+        if (currentVols.chords > 0) playChord(audioCtx.current, time, currentVols.chords, barIndex);
+        if (currentVols.bass > 0) playBass(audioCtx.current, time, currentVols.bass, barIndex);
     }
   }
 
@@ -271,15 +277,19 @@ function App() {
   const handleVol = (type, val) => {
     const v = parseFloat(val);
     setVols(prev => ({...prev, [type]: v}));
+    
+    // For Ambient (Continuous) Sounds: Update Node directly
     if (audioCtx.current && nodes.current[type]) {
         nodes.current[type].gain.setTargetAtTime(v, audioCtx.current.currentTime, 0.1);
     }
+    // For Beats (Discrete) Sounds: They read automatically from volsRef
   }
 
   const applyPreset = (p) => {
-    if(p === 'focus') { handleVol('rain', 0.1); handleVol('drone', 0.1); handleVol('beats', 0.4); handleVol('chords', 0.2); handleVol('bass', 0.2); handleVol('vinyl', 0.1); }
-    if(p === 'sleep') { handleVol('rain', 0.5); handleVol('drone', 0.1); handleVol('beats', 0.0); handleVol('chords', 0.0); handleVol('bass', 0.0); handleVol('vinyl', 0.05); }
-    if(p === 'vibe')  { handleVol('rain', 0.1); handleVol('drone', 0.0); handleVol('beats', 0.6); handleVol('chords', 0.5); handleVol('bass', 0.5); handleVol('vinyl', 0.2); }
+    if(p === 'focus') { handleVol('rain', 0.1); handleVol('drone', 0.1); handleVol('beats', 0.4); handleVol('chords', 0.2); handleVol('bass', 0.2); handleVol('vinyl', 0.1); handleVol('rumble', 0.0); }
+    if(p === 'sleep') { handleVol('rain', 0.5); handleVol('drone', 0.1); handleVol('beats', 0.0); handleVol('chords', 0.0); handleVol('bass', 0.0); handleVol('vinyl', 0.05); handleVol('rumble', 0.4); }
+    if(p === 'vibe')  { handleVol('rain', 0.1); handleVol('drone', 0.0); handleVol('beats', 0.6); handleVol('chords', 0.5); handleVol('bass', 0.5); handleVol('vinyl', 0.2); handleVol('rumble', 0.0); }
+    if(p === 'storm') { handleVol('rain', 0.8); handleVol('drone', 0.0); handleVol('beats', 0.0); handleVol('chords', 0.0); handleVol('bass', 0.0); handleVol('vinyl', 0.0); handleVol('rumble', 0.6); }
   }
 
   // =========================================================
@@ -425,6 +435,7 @@ function App() {
                 <button className="btn-preset" onClick={() => applyPreset('focus')}>Focus</button>
                 <button className="btn-preset" onClick={() => applyPreset('sleep')}>Sleep</button>
                 <button className="btn-preset" onClick={() => applyPreset('vibe')}>Vibe</button>
+                <button className="btn-preset" onClick={() => applyPreset('storm')}>Storm</button>
             </div>
 
             <div className="slider-group">
@@ -435,6 +446,11 @@ function App() {
             <div className="slider-group">
               <div className="slider-label"><span>Vinyl Crackle</span><span>{(vols.vinyl * 100).toFixed(0)}%</span></div>
               <input type="range" min="0" max="1" step="0.01" value={vols.vinyl} onChange={e => handleVol('vinyl', e.target.value)} />
+            </div>
+
+            <div className="slider-group">
+              <div className="slider-label"><span>Deep Rumble</span><span>{(vols.rumble * 100).toFixed(0)}%</span></div>
+              <input type="range" min="0" max="1" step="0.01" value={vols.rumble} onChange={e => handleVol('rumble', e.target.value)} />
             </div>
 
             <div className="slider-group">
