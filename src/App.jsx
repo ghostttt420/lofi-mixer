@@ -4,14 +4,24 @@ import './App.css'
 function App() {
   const [started, setStarted] = useState(false)
   const [timeMode, setTimeMode] = useState('day') 
-  const [vols, setVols] = useState({ rain: 0, drone: 0, rumble: 0 })
+  
+  // 1. PERSISTENCE: Load from LocalStorage or default to 0
+  const [vols, setVols] = useState(() => {
+    const saved = localStorage.getItem('lofi-vols')
+    return saved ? JSON.parse(saved) : { rain: 0, drone: 0, rumble: 0 }
+  })
 
   const audioCtx = useRef(null)
   const nodes = useRef({}) 
   const analyserRef = useRef(null) 
   const canvasRef = useRef(null)
 
-  // --- AUDIO ENGINE (Unchanged) ---
+  // Save to LocalStorage whenever vols change
+  useEffect(() => {
+    localStorage.setItem('lofi-vols', JSON.stringify(vols))
+  }, [vols])
+
+  // --- AUDIO GENERATORS ---
   const createPinkNoise = (ctx) => {
     const bufferSize = 2 * ctx.sampleRate;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -62,9 +72,9 @@ function App() {
     analyser.connect(ctx.destination)
     analyserRef.current = analyser
 
-    const rainGain = ctx.createGain(); rainGain.gain.value = 0;
-    const droneGain = ctx.createGain(); droneGain.gain.value = 0;
-    const rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0;
+    const rainGain = ctx.createGain(); rainGain.gain.value = vols.rain; // Load saved vol
+    const droneGain = ctx.createGain(); droneGain.gain.value = vols.drone;
+    const rumbleGain = ctx.createGain(); rumbleGain.gain.value = vols.rumble;
 
     rainGain.connect(analyser)
     droneGain.connect(analyser)
@@ -126,43 +136,27 @@ function App() {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     let frameId;
+    let lightningTimer = 0; // NEW: Timer for flash
     
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    // --- ASSETS INITIALIZATION ---
-    
-    // 1. Rain
+    // Assets
     const rainParticles = [];
     for(let i=0; i<100; i++) rainParticles.push({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
-        s: Math.random() * 2 + 0.5, 
-        l: Math.random() * 20 + 5   
+        x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+        s: Math.random() * 2 + 0.5, l: Math.random() * 20 + 5   
     });
-
-    // 2. Stars (Night Only)
     const stars = [];
     for(let i=0; i<150; i++) stars.push({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
-        size: Math.random() * 1.5,
-        blinkSpeed: Math.random() * 0.05,
-        offset: Math.random() * Math.PI
+        x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+        size: Math.random() * 1.5, blinkSpeed: Math.random() * 0.05, offset: Math.random() * Math.PI
     });
-
-    // 3. Clouds (Day Only) - Clusters of circles
     const clouds = [];
-    for(let i=0; i<5; i++) {
-        clouds.push({
-            x: Math.random() * canvas.width,
-            y: (Math.random() * canvas.height) * 0.5, // Top half only
-            speed: (Math.random() * 0.2) + 0.1,
-            size: (Math.random() * 50) + 50,
-            puffs: 5 // number of circles per cloud
-        });
-    }
-
+    for(let i=0; i<5; i++) clouds.push({
+        x: Math.random() * canvas.width, y: (Math.random() * canvas.height) * 0.5,
+        speed: (Math.random() * 0.2) + 0.1, size: (Math.random() * 50) + 50, puffs: 5
+    });
     let shootingStar = null; 
 
     const draw = () => {
@@ -171,118 +165,81 @@ function App() {
         let sunColor = '#fff';
         let isDay = false;
 
-        // --- PALETTE MANAGER ---
-        if (timeMode === 'morning') { 
-            bgColor = '#0f172a'; accent = '#38bdf8'; sunColor = '#fcd34d'; // Yellow Sun
-            isDay = true;
-        } else if (timeMode === 'day') { 
-            bgColor = '#1e293b'; accent = '#a5b4fc'; sunColor = '#fdba74'; // Orange Sun
-            isDay = true;
-        } else if (timeMode === 'evening') { 
-            bgColor = '#271a12'; accent = '#fb923c'; sunColor = '#ea580c'; // Red Sun
-            isDay = false; // Transitioning
-        } else { 
-            bgColor = '#020205'; accent = '#94a3b8'; sunColor = '#f8fafc'; // White Moon
-            isDay = false;
-        }
+        if (timeMode === 'morning') { bgColor = '#0f172a'; accent = '#38bdf8'; sunColor = '#fcd34d'; isDay = true; } 
+        else if (timeMode === 'day') { bgColor = '#1e293b'; accent = '#a5b4fc'; sunColor = '#fdba74'; isDay = true; } 
+        else if (timeMode === 'evening') { bgColor = '#271a12'; accent = '#fb923c'; sunColor = '#ea580c'; isDay = false; } 
+        else { bgColor = '#020205'; accent = '#94a3b8'; sunColor = '#f8fafc'; isDay = false; }
 
-        // Clear Screen
         ctx.fillStyle = bgColor;
         ctx.fillRect(0,0, canvas.width, canvas.height);
 
-        // --- 1. DRAW CELESTIAL BODY (SUN / MOON) ---
-        ctx.shadowBlur = 50;
-        ctx.shadowColor = sunColor;
-        ctx.fillStyle = sunColor;
-        ctx.beginPath();
-        // Position changes slightly based on mode (simulating arc)
-        const sunY = timeMode === 'morning' ? canvas.height * 0.2 : 
-                     timeMode === 'day' ? canvas.height * 0.1 : 
-                     canvas.height * 0.15;
-        ctx.arc(canvas.width * 0.8, sunY, 40, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0; // Reset shadow
+        // 2. LIGHTNING FLASH
+        // Logic: If rumble is loud (>0.5), random chance to flash
+        if (vols.rumble > 0.5) {
+            // The louder the rumble, the higher the chance
+            if (Math.random() < 0.005 * (vols.rumble * 2)) {
+                lightningTimer = 5; // Flash for 5 frames
+            }
+        }
+        if (lightningTimer > 0) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${lightningTimer * 0.1})`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            lightningTimer--;
+        }
 
-        // --- 2. DRAW CLOUDS (Morning/Day) ---
+        // 3. SUN/MOON
+        ctx.shadowBlur = 50; ctx.shadowColor = sunColor; ctx.fillStyle = sunColor; ctx.beginPath();
+        const sunY = timeMode === 'morning' ? canvas.height*0.2 : timeMode === 'day' ? canvas.height*0.1 : canvas.height*0.15;
+        ctx.arc(canvas.width * 0.8, sunY, 40, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+
+        // 4. CLOUDS
         if (isDay || timeMode === 'evening') {
             ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-            clouds.forEach(cloud => {
-                // Draw Cloud Cluster
-                for(let j=0; j<cloud.puffs; j++) {
-                    ctx.beginPath();
-                    // Offset puff positions
-                    ctx.arc(cloud.x + (j*30), cloud.y + (Math.sin(j)*10), cloud.size, 0, Math.PI*2);
-                    ctx.fill();
+            clouds.forEach(c => {
+                for(let j=0; j<c.puffs; j++) {
+                    ctx.beginPath(); ctx.arc(c.x + (j*30), c.y + (Math.sin(j)*10), c.size, 0, Math.PI*2); ctx.fill();
                 }
-                // Move Cloud
-                cloud.x += cloud.speed;
-                if(cloud.x > canvas.width + 100) cloud.x = -200;
+                c.x += c.speed; if(c.x > canvas.width + 100) c.x = -200;
             });
         }
 
-        // --- 3. DRAW STARS (Night/Evening) ---
+        // 5. STARS
         if (!isDay || timeMode === 'evening') {
             ctx.fillStyle = 'white';
-            stars.forEach(star => {
-                const opacity = 0.3 + Math.abs(Math.sin(Date.now() * 0.002 + star.offset)) * 0.7;
-                ctx.globalAlpha = opacity;
-                ctx.beginPath();
-                ctx.arc(star.x, star.y, star.size, 0, Math.PI*2);
-                ctx.fill();
+            stars.forEach(s => {
+                const opacity = 0.3 + Math.abs(Math.sin(Date.now() * 0.002 + s.offset)) * 0.7;
+                ctx.globalAlpha = opacity; ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI*2); ctx.fill();
             });
             ctx.globalAlpha = 1.0;
-
-            // Shooting Star Logic
-            if (!shootingStar && Math.random() < 0.005) {
-                shootingStar = {
-                    x: Math.random() * canvas.width, y: Math.random() * (canvas.height/2),
-                    vx: 15, vy: 2, len: 0
-                };
-            }
+            if (!shootingStar && Math.random() < 0.005) shootingStar = { x: Math.random()*canvas.width, y: Math.random()*(canvas.height/2), vx: 15, vy: 2, len: 0 };
             if(shootingStar) {
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(shootingStar.x, shootingStar.y);
-                ctx.lineTo(shootingStar.x - shootingStar.len, shootingStar.y - (shootingStar.len * 0.2));
-                ctx.stroke();
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(shootingStar.x, shootingStar.y);
+                ctx.lineTo(shootingStar.x - shootingStar.len, shootingStar.y - (shootingStar.len * 0.2)); ctx.stroke();
                 shootingStar.x += shootingStar.vx; shootingStar.y += shootingStar.vy; shootingStar.len += 2;
                 if (shootingStar.x > canvas.width + 200) shootingStar = null;
             }
         }
 
-        // --- 4. WAVEFORM (Visualizer) ---
+        // 6. WAVEFORM
         if (analyserRef.current) {
             const bufferLength = analyserRef.current.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
             analyserRef.current.getByteTimeDomainData(dataArray);
-
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = accent;
-            ctx.beginPath();
-            const sliceWidth = canvas.width / bufferLength;
-            let x = 0;
+            ctx.lineWidth = 2; ctx.strokeStyle = accent; ctx.beginPath();
+            const sliceWidth = canvas.width / bufferLength; let x = 0;
             for(let i = 0; i < bufferLength; i++) {
-                const v = dataArray[i] / 128.0; 
-                const y = (v * (canvas.height/4)) + (canvas.height * 0.75);
-                if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-                x += sliceWidth;
+                const v = dataArray[i] / 128.0; const y = (v * (canvas.height/4)) + (canvas.height * 0.75);
+                if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); x += sliceWidth;
             }
             ctx.stroke();
         }
 
-        // --- 5. RAIN (Overlay) ---
-        ctx.strokeStyle = accent;
-        ctx.lineWidth = 1;
+        // 7. RAIN
+        ctx.strokeStyle = accent; ctx.lineWidth = 1;
         rainParticles.forEach(p => {
             const opacity = vols.rain > 0 ? vols.rain * 0.5 : 0;
-            ctx.globalAlpha = opacity;
-            ctx.beginPath();
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(p.x, p.y + p.l);
-            ctx.stroke();
-            p.y += p.s + (vols.rain * 15);
-            if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
+            ctx.globalAlpha = opacity; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, p.y + p.l); ctx.stroke();
+            p.y += p.s + (vols.rain * 15); if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
         });
 
         frameId = requestAnimationFrame(draw);
