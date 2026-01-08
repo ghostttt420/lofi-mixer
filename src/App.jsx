@@ -8,10 +8,10 @@ function App() {
 
   const audioCtx = useRef(null)
   const nodes = useRef({}) 
-  const analyserRef = useRef(null) // To "see" the audio
+  const analyserRef = useRef(null) 
   const canvasRef = useRef(null)
 
-  // --- AUDIO GENERATORS ---
+  // --- AUDIO ENGINE (Unchanged) ---
   const createPinkNoise = (ctx) => {
     const bufferSize = 2 * ctx.sampleRate;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -57,7 +57,6 @@ function App() {
     const ctx = new Ctx()
     audioCtx.current = ctx
 
-    // Master Analyser (Visualizer)
     const analyser = ctx.createAnalyser()
     analyser.fftSize = 2048
     analyser.connect(ctx.destination)
@@ -67,17 +66,14 @@ function App() {
     const droneGain = ctx.createGain(); droneGain.gain.value = 0;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0;
 
-    // Connect Gains to Analyser (so we can see them)
     rainGain.connect(analyser)
     droneGain.connect(analyser)
     rumbleGain.connect(analyser)
 
-    // 1. RAIN
     const rainSrc = createPinkNoise(ctx);
     rainSrc.connect(rainGain);
     rainSrc.start(0);
 
-    // 2. DRONE
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     osc1.type = 'sine'; osc2.type = 'triangle'; 
@@ -103,7 +99,6 @@ function App() {
     droneFilter.connect(droneGain);
     osc1.start(0); osc2.start(0);
 
-    // 3. RUMBLE
     const rumbleSrc = createBrownNoise(ctx);
     rumbleSrc.connect(rumbleGain);
     rumbleSrc.start(0);
@@ -120,14 +115,13 @@ function App() {
     }
   }
 
-  // PRESETS
   const applyPreset = (p) => {
     if(p === 'focus') { handleVol('rain', 0.2); handleVol('drone', 0.1); handleVol('rumble', 0.0); }
     if(p === 'sleep') { handleVol('rain', 0.5); handleVol('drone', 0.05); handleVol('rumble', 0.4); }
     if(p === 'storm') { handleVol('rain', 0.8); handleVol('drone', 0.0); handleVol('rumble', 0.6); }
   }
 
-  // CANVAS ENGINE
+  // --- CANVAS VISUAL ENGINE ---
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -136,29 +130,128 @@ function App() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const particles = [];
-    for(let i=0; i<100; i++) particles.push({
+    // --- ASSETS INITIALIZATION ---
+    
+    // 1. Rain
+    const rainParticles = [];
+    for(let i=0; i<100; i++) rainParticles.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
         s: Math.random() * 2 + 0.5, 
         l: Math.random() * 20 + 5   
     });
 
+    // 2. Stars (Night Only)
+    const stars = [];
+    for(let i=0; i<150; i++) stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 1.5,
+        blinkSpeed: Math.random() * 0.05,
+        offset: Math.random() * Math.PI
+    });
+
+    // 3. Clouds (Day Only) - Clusters of circles
+    const clouds = [];
+    for(let i=0; i<5; i++) {
+        clouds.push({
+            x: Math.random() * canvas.width,
+            y: (Math.random() * canvas.height) * 0.5, // Top half only
+            speed: (Math.random() * 0.2) + 0.1,
+            size: (Math.random() * 50) + 50,
+            puffs: 5 // number of circles per cloud
+        });
+    }
+
+    let shootingStar = null; 
+
     const draw = () => {
         let bgColor = '#000';
         let accent = '#fff';
+        let sunColor = '#fff';
+        let isDay = false;
 
-        // High-end Gradients
-        if (timeMode === 'morning') { bgColor = '#0f172a'; accent = '#38bdf8'; } // Dark Slate / Cyan
-        else if (timeMode === 'day') { bgColor = '#1e293b'; accent = '#a5b4fc'; } // Slate / Indigo
-        else if (timeMode === 'evening') { bgColor = '#271a12'; accent = '#fb923c'; } // Espresso / Orange
-        else { bgColor = '#000000'; accent = '#94a3b8'; } // Pure Black / Slate
+        // --- PALETTE MANAGER ---
+        if (timeMode === 'morning') { 
+            bgColor = '#0f172a'; accent = '#38bdf8'; sunColor = '#fcd34d'; // Yellow Sun
+            isDay = true;
+        } else if (timeMode === 'day') { 
+            bgColor = '#1e293b'; accent = '#a5b4fc'; sunColor = '#fdba74'; // Orange Sun
+            isDay = true;
+        } else if (timeMode === 'evening') { 
+            bgColor = '#271a12'; accent = '#fb923c'; sunColor = '#ea580c'; // Red Sun
+            isDay = false; // Transitioning
+        } else { 
+            bgColor = '#020205'; accent = '#94a3b8'; sunColor = '#f8fafc'; // White Moon
+            isDay = false;
+        }
 
-        // Clear
+        // Clear Screen
         ctx.fillStyle = bgColor;
         ctx.fillRect(0,0, canvas.width, canvas.height);
 
-        // 1. Draw Waveform (The Visualizer)
+        // --- 1. DRAW CELESTIAL BODY (SUN / MOON) ---
+        ctx.shadowBlur = 50;
+        ctx.shadowColor = sunColor;
+        ctx.fillStyle = sunColor;
+        ctx.beginPath();
+        // Position changes slightly based on mode (simulating arc)
+        const sunY = timeMode === 'morning' ? canvas.height * 0.2 : 
+                     timeMode === 'day' ? canvas.height * 0.1 : 
+                     canvas.height * 0.15;
+        ctx.arc(canvas.width * 0.8, sunY, 40, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0; // Reset shadow
+
+        // --- 2. DRAW CLOUDS (Morning/Day) ---
+        if (isDay || timeMode === 'evening') {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            clouds.forEach(cloud => {
+                // Draw Cloud Cluster
+                for(let j=0; j<cloud.puffs; j++) {
+                    ctx.beginPath();
+                    // Offset puff positions
+                    ctx.arc(cloud.x + (j*30), cloud.y + (Math.sin(j)*10), cloud.size, 0, Math.PI*2);
+                    ctx.fill();
+                }
+                // Move Cloud
+                cloud.x += cloud.speed;
+                if(cloud.x > canvas.width + 100) cloud.x = -200;
+            });
+        }
+
+        // --- 3. DRAW STARS (Night/Evening) ---
+        if (!isDay || timeMode === 'evening') {
+            ctx.fillStyle = 'white';
+            stars.forEach(star => {
+                const opacity = 0.3 + Math.abs(Math.sin(Date.now() * 0.002 + star.offset)) * 0.7;
+                ctx.globalAlpha = opacity;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI*2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            // Shooting Star Logic
+            if (!shootingStar && Math.random() < 0.005) {
+                shootingStar = {
+                    x: Math.random() * canvas.width, y: Math.random() * (canvas.height/2),
+                    vx: 15, vy: 2, len: 0
+                };
+            }
+            if(shootingStar) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(shootingStar.x, shootingStar.y);
+                ctx.lineTo(shootingStar.x - shootingStar.len, shootingStar.y - (shootingStar.len * 0.2));
+                ctx.stroke();
+                shootingStar.x += shootingStar.vx; shootingStar.y += shootingStar.vy; shootingStar.len += 2;
+                if (shootingStar.x > canvas.width + 200) shootingStar = null;
+            }
+        }
+
+        // --- 4. WAVEFORM (Visualizer) ---
         if (analyserRef.current) {
             const bufferLength = analyserRef.current.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
@@ -169,29 +262,25 @@ function App() {
             ctx.beginPath();
             const sliceWidth = canvas.width / bufferLength;
             let x = 0;
-
             for(let i = 0; i < bufferLength; i++) {
-                const v = dataArray[i] / 128.0; // range 0 to 2
-                const y = (v * (canvas.height/4)) + (canvas.height * 0.75); // Draw at bottom 1/4
-
-                if(i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
+                const v = dataArray[i] / 128.0; 
+                const y = (v * (canvas.height/4)) + (canvas.height * 0.75);
+                if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
                 x += sliceWidth;
             }
             ctx.stroke();
         }
 
-        // 2. Draw Rain
+        // --- 5. RAIN (Overlay) ---
         ctx.strokeStyle = accent;
         ctx.lineWidth = 1;
-        particles.forEach(p => {
+        rainParticles.forEach(p => {
             const opacity = vols.rain > 0 ? vols.rain * 0.5 : 0;
             ctx.globalAlpha = opacity;
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p.x, p.y + p.l);
             ctx.stroke();
-
             p.y += p.s + (vols.rain * 15);
             if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
         });
@@ -221,7 +310,6 @@ function App() {
             <h1>Lofi Gen.</h1>
             <div className="subtitle">Current Phase: {timeMode}</div>
 
-            {/* PRESETS */}
             <div className="preset-row">
                 <button className="btn-preset" onClick={() => applyPreset('focus')}>Focus</button>
                 <button className="btn-preset" onClick={() => applyPreset('sleep')}>Sleep</button>
