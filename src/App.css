@@ -1,120 +1,122 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;700&display=swap');
 
 body {
   margin: 0;
   height: 100vh;
-  transition: background 2s ease-in-out; /* Smooth transition between times */
-  font-family: 'DM Sans', sans-serif;
+  background: #000;
+  font-family: 'Space Grotesk', sans-serif;
+  overflow: hidden;
   color: white;
+}
+
+/* The Canvas lives BEHIND the app */
+canvas#bg-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1; /* Background layer */
+}
+
+/* The App lives ON TOP */
+#root {
+  position: relative;
+  z-index: 10; /* Foreground layer */
+  width: 100%;
+  height: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
-  overflow: hidden;
 }
 
-/* TIME OF DAY THEMES */
-body.morning {
-  background: linear-gradient(120deg, #a1c4fd 0%, #c2e9fb 100%); /* Soft Blue */
-  color: #1a202c;
-}
-body.day {
-  background: linear-gradient(120deg, #f6d365 0%, #fda085 100%); /* Sunny Orange */
-  color: #1a202c;
-}
-body.evening {
-  background: linear-gradient(120deg, #667eea 0%, #764ba2 100%); /* Purple Dusk */
-  color: white;
-}
-body.night {
-  background: linear-gradient(to bottom, #0f0c29, #302b63, #24243e); /* Deep Space */
-  color: white;
-}
-
-#root {
+.interface {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(15px); /* The frosted glass effect */
+  -webkit-backdrop-filter: blur(15px);
+  padding: 40px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   width: 100%;
-  max-width: 700px;
-  text-align: center;
-  z-index: 10;
+  max-width: 500px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
 }
 
-.mixer-board {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(20px);
-  padding: 3rem;
-  border-radius: 30px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-  transition: all 0.5s;
-}
-
-/* ANIMATED HEADER */
 h1 {
-  font-size: 3rem;
-  margin-bottom: 0.5rem;
-  font-weight: 800;
+  font-size: 2.5rem;
+  margin: 0 0 10px 0;
+  font-weight: 700;
   letter-spacing: -1px;
+  background: linear-gradient(to right, #fff, #aaa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
-.time-badge {
-  display: inline-block;
-  padding: 5px 15px;
-  border-radius: 20px;
-  background: rgba(255,255,255,0.2);
-  font-size: 0.8rem;
-  margin-bottom: 2rem;
+.status {
+  font-size: 0.9rem;
+  color: #888;
+  margin-bottom: 30px;
   text-transform: uppercase;
   letter-spacing: 2px;
-  font-weight: 700;
 }
 
-.tracks {
-  display: grid;
-  grid-template-columns: 1fr 1fr; /* Two columns for more sounds */
-  gap: 15px;
-}
-
-.track {
+.track-row {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  background: rgba(0, 0, 0, 0.1);
-  padding: 20px;
-  border-radius: 20px;
-  transition: transform 0.2s;
+  margin-bottom: 25px;
 }
 
-.track:hover {
-  transform: translateY(-5px);
-  background: rgba(255, 255, 255, 0.15);
+.label {
+  width: 100px;
+  font-weight: 700;
+  font-size: 1rem;
 }
 
-.icon {
-  font-size: 2rem;
-  margin-bottom: 10px;
-  filter: grayscale(100%);
-  opacity: 0.7;
-  transition: all 0.3s;
+/* CUSTOM SLIDER STYLING */
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%;
+  background: transparent;
 }
 
-.icon.active {
-  filter: grayscale(0%);
-  opacity: 1;
+input[type=range]::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 20px;
+  width: 20px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  margin-top: -7px; /* Centers thumb on track */
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+  transition: transform 0.1s;
+}
+
+input[type=range]::-webkit-slider-thumb:hover {
   transform: scale(1.2);
 }
 
-input[type=range] {
+.mute-btn {
   width: 100%;
-  accent-color: currentColor; /* Matches text color */
+  padding: 15px;
+  margin-top: 20px;
+  background: white;
+  color: black;
+  border: none;
+  border-radius: 12px;
+  font-weight: bold;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: opacity 0.2s;
 }
 
-button.mute-all {
-  margin-top: 2rem;
-  background: rgba(255, 255, 255, 0.9);
-  color: #333;
-  border: none;
-  padding: 12px 30px;
-  border-radius: 50px;
-  font-weight: bold;
-  cursor: pointer;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+.mute-btn:hover {
+  opacity: 0.9;
 }
