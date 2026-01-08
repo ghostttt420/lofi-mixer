@@ -5,12 +5,23 @@ function App() {
   const [started, setStarted] = useState(false)
   const [timeMode, setTimeMode] = useState('day') 
   
-  // STATE: All Volume Levels
+  // FIX: Safety Merge to prevent crash from old save files
   const [vols, setVols] = useState(() => {
-    const saved = localStorage.getItem('lofi-vols')
-    return saved ? JSON.parse(saved) : { 
-      rain: 0, drone: 0, rumble: 0, 
-      beats: 0, chords: 0, bass: 0, vinyl: 0 
+    try {
+      const saved = localStorage.getItem('lofi-vols')
+      const parsed = saved ? JSON.parse(saved) : {}
+      // Merge saved values with defaults to ensure no "undefined" crashes
+      return { 
+        rain: parsed.rain || 0, 
+        drone: parsed.drone || 0, 
+        rumble: parsed.rumble || 0, 
+        beats: parsed.beats || 0, 
+        chords: parsed.chords || 0, 
+        bass: parsed.bass || 0, 
+        vinyl: parsed.vinyl || 0 
+      }
+    } catch (e) {
+      return { rain: 0, drone: 0, rumble: 0, beats: 0, chords: 0, bass: 0, vinyl: 0 }
     }
   })
 
@@ -19,7 +30,6 @@ function App() {
   const analyserRef = useRef(null) 
   const canvasRef = useRef(null)
   
-  // SEQUENCER REFS
   const nextNoteTime = useRef(0)
   const current16thNote = useRef(0)
   const schedulerTimer = useRef(null)
@@ -30,10 +40,46 @@ function App() {
   }, [vols])
 
   // =========================================================
-  // AUDIO SYNTHESIS ENGINE
+  // AUDIO HELPERS
   // =========================================================
 
-  // 1. DRUMS
+  const createPinkNoise = (ctx) => {
+    const bufferSize = 2 * ctx.sampleRate;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = buffer.getChannelData(0);
+    let b0=0, b1=0, b2=0, b3=0, b4=0, b5=0, b6=0; 
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      output[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+      output[i] *= 0.11; 
+      b6 = white * 0.115926;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer; noise.loop = true; return noise;
+  }
+
+  const createVinylCrackle = (ctx) => {
+    const bufferSize = ctx.sampleRate * 2; 
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+        if (Math.random() > 0.999) data[i] = Math.random() * 0.5;
+        else data[i] = 0;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer; noise.loop = true; return noise;
+  }
+
+  // =========================================================
+  // INSTRUMENTS
+  // =========================================================
+
   const playKick = (ctx, time, vol) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -61,7 +107,6 @@ function App() {
     osc.frequency.setValueAtTime(250, time);
     gainOsc.gain.setValueAtTime(vol * 0.5, time);
     gainOsc.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
-    
     gainNoise.gain.setValueAtTime(vol * 0.8, time);
     gainNoise.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
 
@@ -83,9 +128,7 @@ function App() {
     noise.start(time); noise.stop(time + 0.05);
   }
 
-  // 2. CHORDS (Rhodes)
   const playChord = (ctx, time, vol, chordIndex) => {
-    // Fmaj7, Em7, Dm7, Cmaj7
     const chords = [
         [349.23, 440.00, 523.25, 659.25], 
         [329.63, 392.00, 493.88, 587.33], 
@@ -93,13 +136,11 @@ function App() {
         [261.63, 329.63, 392.00, 493.88]  
     ];
     const notes = chords[chordIndex % 4];
-
     notes.forEach((freq) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'triangle'; 
         
-        // Wobble LFO
         const lfo = ctx.createOscillator(); lfo.frequency.value = 2; 
         const lfoGain = ctx.createGain(); lfoGain.gain.value = 2; 
         lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
@@ -116,49 +157,62 @@ function App() {
     });
   }
 
-  // 3. BASS (Warm Sine) - NEW
   const playBass = (ctx, time, vol, chordIndex) => {
-    // Root notes: F(1), E(1), D(1), C(1) - Low Octave
     const roots = [87.31, 82.41, 73.42, 65.41]; 
     const freq = roots[chordIndex % 4];
-
-    const osc = ctx.createOscillator();
-    osc.type = 'sine'; // Round and warm
+    const osc = ctx.createOscillator(); osc.type = 'sine'; 
     const gain = ctx.createGain();
-    
     osc.frequency.setValueAtTime(freq, time);
-    osc.connect(gain);
-    gain.connect(nodes.current.masterGain);
-
+    osc.connect(gain); gain.connect(nodes.current.masterGain);
     gain.gain.setValueAtTime(0, time);
-    gain.gain.linearRampToValueAtTime(vol * 0.6, time + 0.1); // Slow attack
-    gain.gain.exponentialRampToValueAtTime(0.01, time + 1.5); // Sustain
-
-    osc.start(time);
-    osc.stop(time + 1.6);
+    gain.gain.linearRampToValueAtTime(vol * 0.6, time + 0.1); 
+    gain.gain.exponentialRampToValueAtTime(0.01, time + 1.5); 
+    osc.start(time); osc.stop(time + 1.6);
   }
 
-  // 4. VINYL CRACKLE (Noise) - NEW
-  const createVinylCrackle = (ctx) => {
-    const bufferSize = ctx.sampleRate * 2; // 2 seconds loop
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
+  // =========================================================
+  // ENGINE LOGIC
+  // =========================================================
 
-    for (let i = 0; i < bufferSize; i++) {
-        // Mostly silence, random click
-        if (Math.random() > 0.999) {
-            data[i] = Math.random() * 0.5; // Pop
-        } else {
-            data[i] = 0;
-        }
-    }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-    noise.loop = true;
-    return noise;
+  const startAmbientLayers = (ctx, dest) => {
+    // Rain
+    const rainSrc = createPinkNoise(ctx);
+    const rainGain = ctx.createGain(); rainGain.gain.value = vols.rain || 0;
+    rainSrc.connect(rainGain).connect(dest);
+    rainSrc.start(0);
+
+    // Drone
+    const osc1 = ctx.createOscillator(); osc1.type = 'sine';
+    const osc2 = ctx.createOscillator(); osc2.type = 'triangle';
+    const hour = new Date().getHours();
+    let baseFreq = hour > 18 || hour < 6 ? 55 : 110; 
+    osc1.frequency.value = baseFreq; osc2.frequency.value = baseFreq + 2;
+    const droneFilter = ctx.createBiquadFilter(); droneFilter.type = 'lowpass'; droneFilter.frequency.value = 400;
+    const droneGain = ctx.createGain(); droneGain.gain.value = vols.drone || 0;
+    osc1.connect(droneFilter); osc2.connect(droneFilter);
+    droneFilter.connect(droneGain).connect(dest);
+    osc1.start(0); osc2.start(0);
+
+    // Rumble
+    const rumbleSrc = createPinkNoise(ctx);
+    const rumbleFilter = ctx.createBiquadFilter(); rumbleFilter.type = 'lowpass'; rumbleFilter.frequency.value = 350;
+    const rumbleGain = ctx.createGain(); rumbleGain.gain.value = vols.rumble || 0;
+    rumbleSrc.connect(rumbleFilter).connect(rumbleGain).connect(dest);
+    rumbleSrc.start(0);
+
+    // Vinyl
+    const vinylSrc = createVinylCrackle(ctx);
+    const vinylGain = ctx.createGain(); vinylGain.gain.value = vols.vinyl || 0;
+    const vinylFilter = ctx.createBiquadFilter(); vinylFilter.type = 'highpass'; vinylFilter.frequency.value = 2000;
+    vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
+    vinylSrc.start(0);
+    
+    nodes.current.rain = rainGain;
+    nodes.current.drone = droneGain;
+    nodes.current.rumble = rumbleGain;
+    nodes.current.vinyl = vinylGain;
   }
 
-  // SEQUENCER LOOP
   const scheduleNote = (beatNumber, time) => {
     if (vols.beats > 0) {
         if (beatNumber === 0 || beatNumber === 10) playKick(audioCtx.current, time, vols.beats);
@@ -166,8 +220,6 @@ function App() {
         if (beatNumber % 2 === 0) playHiHat(audioCtx.current, time, vols.beats);
         else if (Math.random() > 0.5) playHiHat(audioCtx.current, time, vols.beats * 0.5); 
     }
-
-    // Chords & Bass change every bar (beat 0)
     if (beatNumber === 0) {
         const barIndex = Math.floor(Date.now() / 2000); 
         if (vols.chords > 0) playChord(audioCtx.current, time, vols.chords, barIndex);
@@ -187,92 +239,33 @@ function App() {
     schedulerTimer.current = requestAnimationFrame(scheduler);
   }
 
-  // --- START ENGINE ---
   const startEngine = () => {
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    const ctx = new Ctx()
-    audioCtx.current = ctx
+    try {
+        const Ctx = window.AudioContext || window.webkitAudioContext
+        const ctx = new Ctx()
+        audioCtx.current = ctx
 
-    const masterGain = ctx.createGain();
-    masterGain.gain.value = 1.0;
-    masterGain.connect(ctx.destination);
-    
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 2048
-    masterGain.connect(analyser)
-    analyserRef.current = analyser
+        const masterGain = ctx.createGain();
+        masterGain.gain.value = 1.0;
+        masterGain.connect(ctx.destination);
+        
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 2048
+        masterGain.connect(analyser)
+        analyserRef.current = analyser
 
-    nodes.current = { masterGain }
+        nodes.current = { masterGain }
 
-    // Start Layers
-    startAmbientLayers(ctx, masterGain);
+        startAmbientLayers(ctx, masterGain);
 
-    // Start Sequencer
-    nextNoteTime.current = ctx.currentTime + 0.1;
-    scheduler();
+        nextNoteTime.current = ctx.currentTime + 0.1;
+        scheduler();
 
-    setStarted(true)
-  }
-
-  const startAmbientLayers = (ctx, dest) => {
-    // Rain
-    const rainSrc = createPinkNoise(ctx);
-    const rainGain = ctx.createGain(); rainGain.gain.value = vols.rain;
-    rainSrc.connect(rainGain).connect(dest);
-    rainSrc.start(0);
-
-    // Drone
-    const osc1 = ctx.createOscillator(); osc1.type = 'sine';
-    const osc2 = ctx.createOscillator(); osc2.type = 'triangle';
-    const hour = new Date().getHours();
-    let baseFreq = hour > 18 || hour < 6 ? 55 : 110; 
-    osc1.frequency.value = baseFreq; osc2.frequency.value = baseFreq + 2;
-    const droneFilter = ctx.createBiquadFilter(); droneFilter.type = 'lowpass'; droneFilter.frequency.value = 400;
-    const droneGain = ctx.createGain(); droneGain.gain.value = vols.drone;
-    osc1.connect(droneFilter); osc2.connect(droneFilter);
-    droneFilter.connect(droneGain).connect(dest);
-    osc1.start(0); osc2.start(0);
-
-    // Rumble
-    const rumbleSrc = createPinkNoise(ctx);
-    const rumbleFilter = ctx.createBiquadFilter(); rumbleFilter.type = 'lowpass'; rumbleFilter.frequency.value = 350;
-    const rumbleGain = ctx.createGain(); rumbleGain.gain.value = vols.rumble;
-    rumbleSrc.connect(rumbleFilter).connect(rumbleGain).connect(dest);
-    rumbleSrc.start(0);
-
-    // Vinyl
-    const vinylSrc = createVinylCrackle(ctx);
-    const vinylGain = ctx.createGain(); vinylGain.gain.value = vols.vinyl;
-    // Highpass filter for vinyl pops (remove low rumble)
-    const vinylFilter = ctx.createBiquadFilter(); vinylFilter.type = 'highpass'; vinylFilter.frequency.value = 2000;
-    vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
-    vinylSrc.start(0);
-    
-    nodes.current.rain = rainGain;
-    nodes.current.drone = droneGain;
-    nodes.current.rumble = rumbleGain;
-    nodes.current.vinyl = vinylGain;
-  }
-
-  const createPinkNoise = (ctx) => {
-    const bufferSize = 2 * ctx.sampleRate;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const output = buffer.getChannelData(0);
-    let b0=0, b1=0, b2=0, b3=0, b4=0, b5=0, b6=0; 
-    for (let i = 0; i < bufferSize; i++) {
-      const white = Math.random() * 2 - 1;
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      output[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
-      output[i] *= 0.11; 
-      b6 = white * 0.115926;
+        setStarted(true)
+    } catch (err) {
+        console.error("Audio Engine Start Failed:", err)
+        alert("Audio Engine Failed. Please refresh.")
     }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer; noise.loop = true; return noise;
   }
 
   const handleVol = (type, val) => {
@@ -290,7 +283,7 @@ function App() {
   }
 
   // =========================================================
-  // VISUAL ENGINE (Fully Restored)
+  // VISUAL ENGINE
   // =========================================================
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -301,7 +294,6 @@ function App() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    // Assets
     const rainParticles = [];
     for(let i=0; i<100; i++) rainParticles.push({
         x: Math.random() * canvas.width, y: Math.random() * canvas.height,
@@ -325,7 +317,6 @@ function App() {
         let sunColor = '#fff';
         let isDay = false;
         
-        // Time Logic for Visuals
         const hour = new Date().getHours();
         let mode = 'day';
         if (hour >= 5 && hour < 12) { mode = 'morning'; }
