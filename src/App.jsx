@@ -8,7 +8,7 @@ function App() {
 
   const audioCtx = useRef(null)
   const nodes = useRef({}) 
-  const analyserRef = useRef(null) // To "see" the audio
+  const analyserRef = useRef(null) 
   const canvasRef = useRef(null)
 
   // --- AUDIO GENERATORS ---
@@ -57,7 +57,6 @@ function App() {
     const ctx = new Ctx()
     audioCtx.current = ctx
 
-    // Master Analyser (Visualizer)
     const analyser = ctx.createAnalyser()
     analyser.fftSize = 2048
     analyser.connect(ctx.destination)
@@ -67,17 +66,14 @@ function App() {
     const droneGain = ctx.createGain(); droneGain.gain.value = 0;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0;
 
-    // Connect Gains to Analyser (so we can see them)
     rainGain.connect(analyser)
     droneGain.connect(analyser)
     rumbleGain.connect(analyser)
 
-    // 1. RAIN
     const rainSrc = createPinkNoise(ctx);
     rainSrc.connect(rainGain);
     rainSrc.start(0);
 
-    // 2. DRONE
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     osc1.type = 'sine'; osc2.type = 'triangle'; 
@@ -103,7 +99,6 @@ function App() {
     droneFilter.connect(droneGain);
     osc1.start(0); osc2.start(0);
 
-    // 3. RUMBLE
     const rumbleSrc = createBrownNoise(ctx);
     rumbleSrc.connect(rumbleGain);
     rumbleSrc.start(0);
@@ -120,7 +115,6 @@ function App() {
     }
   }
 
-  // PRESETS
   const applyPreset = (p) => {
     if(p === 'focus') { handleVol('rain', 0.2); handleVol('drone', 0.1); handleVol('rumble', 0.0); }
     if(p === 'sleep') { handleVol('rain', 0.5); handleVol('drone', 0.05); handleVol('rumble', 0.4); }
@@ -136,7 +130,8 @@ function App() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const particles = [];
+    // --- PARTICLE SYSTEMS ---
+    const particles = []; // Rain
     for(let i=0; i<100; i++) particles.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
@@ -144,21 +139,76 @@ function App() {
         l: Math.random() * 20 + 5   
     });
 
+    const stars = []; // Static Stars
+    for(let i=0; i<150; i++) stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 1.5,
+        blinkSpeed: Math.random() * 0.05,
+        offset: Math.random() * Math.PI
+    });
+
+    let shootingStar = null; // One active shooting star at a time
+
     const draw = () => {
         let bgColor = '#000';
         let accent = '#fff';
 
-        // High-end Gradients
-        if (timeMode === 'morning') { bgColor = '#0f172a'; accent = '#38bdf8'; } // Dark Slate / Cyan
-        else if (timeMode === 'day') { bgColor = '#1e293b'; accent = '#a5b4fc'; } // Slate / Indigo
-        else if (timeMode === 'evening') { bgColor = '#271a12'; accent = '#fb923c'; } // Espresso / Orange
-        else { bgColor = '#000000'; accent = '#94a3b8'; } // Pure Black / Slate
+        // Gradients based on time
+        if (timeMode === 'morning') { bgColor = '#0f172a'; accent = '#38bdf8'; } 
+        else if (timeMode === 'day') { bgColor = '#1e293b'; accent = '#a5b4fc'; } 
+        else if (timeMode === 'evening') { bgColor = '#271a12'; accent = '#fb923c'; } 
+        else { bgColor = '#020205'; accent = '#94a3b8'; } // Darker void for night
 
         // Clear
         ctx.fillStyle = bgColor;
         ctx.fillRect(0,0, canvas.width, canvas.height);
 
-        // 1. Draw Waveform (The Visualizer)
+        // 1. DRAW STARS (Only Night/Evening)
+        if (timeMode === 'night' || timeMode === 'evening') {
+            ctx.fillStyle = 'white';
+            stars.forEach(star => {
+                // Twinkle Math
+                const opacity = 0.3 + Math.abs(Math.sin(Date.now() * 0.002 + star.offset)) * 0.7;
+                ctx.globalAlpha = opacity;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI*2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            // SHOOTING STAR LOGIC
+            if (!shootingStar) {
+                // 0.5% chance per frame to spawn a shooting star
+                if (Math.random() < 0.005) {
+                    shootingStar = {
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * (canvas.height / 2),
+                        vx: (Math.random() * 10) + 5, // velocity X
+                        vy: (Math.random() * 2) + 1,  // velocity Y
+                        len: 0
+                    };
+                }
+            } else {
+                // Draw Shooting Star
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(shootingStar.x, shootingStar.y);
+                ctx.lineTo(shootingStar.x - shootingStar.len, shootingStar.y - (shootingStar.len * 0.2));
+                ctx.stroke();
+
+                // Move it
+                shootingStar.x += shootingStar.vx;
+                shootingStar.y += shootingStar.vy;
+                shootingStar.len += 2; // Tail grows
+
+                // Despawn if off screen
+                if (shootingStar.x > canvas.width + 100) shootingStar = null;
+            }
+        }
+
+        // 2. WAVEFORM
         if (analyserRef.current) {
             const bufferLength = analyserRef.current.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
@@ -171,8 +221,8 @@ function App() {
             let x = 0;
 
             for(let i = 0; i < bufferLength; i++) {
-                const v = dataArray[i] / 128.0; // range 0 to 2
-                const y = (v * (canvas.height/4)) + (canvas.height * 0.75); // Draw at bottom 1/4
+                const v = dataArray[i] / 128.0; 
+                const y = (v * (canvas.height/4)) + (canvas.height * 0.75);
 
                 if(i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
@@ -181,7 +231,7 @@ function App() {
             ctx.stroke();
         }
 
-        // 2. Draw Rain
+        // 3. DRAW RAIN
         ctx.strokeStyle = accent;
         ctx.lineWidth = 1;
         particles.forEach(p => {
@@ -221,7 +271,6 @@ function App() {
             <h1>Lofi Gen.</h1>
             <div className="subtitle">Current Phase: {timeMode}</div>
 
-            {/* PRESETS */}
             <div className="preset-row">
                 <button className="btn-preset" onClick={() => applyPreset('focus')}>Focus</button>
                 <button className="btn-preset" onClick={() => applyPreset('sleep')}>Sleep</button>
