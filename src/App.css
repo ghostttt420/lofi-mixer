@@ -3,8 +3,7 @@
 body {
   margin: 0;
   height: 100vh;
-  background: #0f0c29;  /* Deep Night Blue */
-  background: linear-gradient(to bottom, #24243e, #0f0c29);
+  transition: background 2s ease-in-out; /* Smooth transition between times */
   font-family: 'DM Sans', sans-serif;
   color: white;
   display: flex;
@@ -13,112 +12,109 @@ body {
   overflow: hidden;
 }
 
+/* TIME OF DAY THEMES */
+body.morning {
+  background: linear-gradient(120deg, #a1c4fd 0%, #c2e9fb 100%); /* Soft Blue */
+  color: #1a202c;
+}
+body.day {
+  background: linear-gradient(120deg, #f6d365 0%, #fda085 100%); /* Sunny Orange */
+  color: #1a202c;
+}
+body.evening {
+  background: linear-gradient(120deg, #667eea 0%, #764ba2 100%); /* Purple Dusk */
+  color: white;
+}
+body.night {
+  background: linear-gradient(to bottom, #0f0c29, #302b63, #24243e); /* Deep Space */
+  color: white;
+}
+
 #root {
   width: 100%;
-  max-width: 600px;
+  max-width: 700px;
   text-align: center;
+  z-index: 10;
 }
 
 .mixer-board {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
   padding: 3rem;
   border-radius: 30px;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+  transition: all 0.5s;
 }
 
+/* ANIMATED HEADER */
 h1 {
-  font-size: 2.5rem;
+  font-size: 3rem;
   margin-bottom: 0.5rem;
-  background: linear-gradient(to right, #ff9966, #ff5e62);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-weight: 800;
+  letter-spacing: -1px;
 }
 
-p.subtitle {
-  color: rgba(255, 255, 255, 0.5);
-  margin-bottom: 3rem;
-  font-size: 0.9rem;
-  letter-spacing: 1px;
+.time-badge {
+  display: inline-block;
+  padding: 5px 15px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.2);
+  font-size: 0.8rem;
+  margin-bottom: 2rem;
   text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: 700;
 }
 
-/* TRACK ROW */
+.tracks {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* Two columns for more sounds */
+  gap: 15px;
+}
+
 .track {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  margin-bottom: 1.5rem;
-  background: rgba(0, 0, 0, 0.2);
-  padding: 15px;
-  border-radius: 15px;
-  transition: background 0.3s;
+  background: rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  border-radius: 20px;
+  transition: transform 0.2s;
 }
 
 .track:hover {
-  background: rgba(255, 255, 255, 0.05);
+  transform: translateY(-5px);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .icon {
-  font-size: 1.8rem;
-  width: 50px;
-  margin-right: 15px;
-  cursor: pointer;
+  font-size: 2rem;
+  margin-bottom: 10px;
   filter: grayscale(100%);
+  opacity: 0.7;
   transition: all 0.3s;
 }
 
 .icon.active {
   filter: grayscale(0%);
-  transform: scale(1.1);
-  text-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+  opacity: 1;
+  transform: scale(1.2);
 }
 
 input[type=range] {
-  -webkit-appearance: none;
   width: 100%;
-  background: transparent;
-}
-
-input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  height: 20px;
-  width: 20px;
-  border-radius: 50%;
-  background: #ff9966;
-  cursor: pointer;
-  margin-top: -8px;
-  box-shadow: 0 0 10px #ff9966;
-}
-
-input[type=range]::-webkit-slider-runnable-track {
-  width: 100%;
-  height: 4px;
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-}
-
-/* GLOBAL CONTROLS */
-.master-controls {
-  margin-top: 3rem;
-  display: flex;
-  justify-content: center;
-  gap: 20px;
+  accent-color: currentColor; /* Matches text color */
 }
 
 button.mute-all {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: white;
-  padding: 10px 25px;
+  margin-top: 2rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+  border: none;
+  padding: 12px 30px;
   border-radius: 50px;
+  font-weight: bold;
   cursor: pointer;
-  font-size: 0.9rem;
-  transition: all 0.3s;
-}
-
-button.mute-all:hover {
-  background: white;
-  color: black;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
 }
