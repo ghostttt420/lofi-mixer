@@ -3,11 +3,12 @@ import './App.css'
 
 function App() {
   const [started, setStarted] = useState(false)
-  const [timeMode, setTimeMode] = useState('day') // morning, day, evening, night
+  const [timeMode, setTimeMode] = useState('day') 
   const [vols, setVols] = useState({ rain: 0, drone: 0, rumble: 0 })
 
   const audioCtx = useRef(null)
   const nodes = useRef({}) 
+  const analyserRef = useRef(null) // To "see" the audio
   const canvasRef = useRef(null)
 
   // --- AUDIO GENERATORS ---
@@ -16,7 +17,6 @@ function App() {
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const output = buffer.getChannelData(0);
     let b0=0, b1=0, b2=0, b3=0, b4=0, b5=0, b6=0; 
-    
     for (let i = 0; i < bufferSize; i++) {
       const white = Math.random() * 2 - 1;
       b0 = 0.99886 * b0 + white * 0.0555179;
@@ -29,7 +29,6 @@ function App() {
       output[i] *= 0.11; 
       b6 = white * 0.115926;
     }
-    
     const noise = ctx.createBufferSource();
     noise.buffer = buffer;
     noise.loop = true;
@@ -53,67 +52,60 @@ function App() {
     return noise;
   }
 
-  // --- INITIALIZE ENGINE ---
   const startEngine = () => {
     const Ctx = window.AudioContext || window.webkitAudioContext
     const ctx = new Ctx()
     audioCtx.current = ctx
 
+    // Master Analyser (Visualizer)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 2048
+    analyser.connect(ctx.destination)
+    analyserRef.current = analyser
+
     const rainGain = ctx.createGain(); rainGain.gain.value = 0;
     const droneGain = ctx.createGain(); droneGain.gain.value = 0;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0;
 
+    // Connect Gains to Analyser (so we can see them)
+    rainGain.connect(analyser)
+    droneGain.connect(analyser)
+    rumbleGain.connect(analyser)
+
     // 1. RAIN
     const rainSrc = createPinkNoise(ctx);
     rainSrc.connect(rainGain);
-    rainGain.connect(ctx.destination);
     rainSrc.start(0);
 
-    // 2. DRONE (Oscillators)
+    // 2. DRONE
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
-    osc1.type = 'sine'; 
-    osc2.type = 'triangle'; 
+    osc1.type = 'sine'; osc2.type = 'triangle'; 
     
-    // DETERMINE FREQUENCY BASED ON TIME
+    // Time Logic
     const hour = new Date().getHours();
-    let baseFreq = 110; // Default A2
+    let baseFreq = 110; 
     let mode = 'day';
 
-    if (hour >= 5 && hour < 12) {
-        mode = 'morning';
-        baseFreq = 146.83; // D3 (Hopeful/Bright)
-    } else if (hour >= 12 && hour < 17) {
-        mode = 'day';
-        baseFreq = 110.00; // A2 (Active/Neutral)
-    } else if (hour >= 17 && hour < 21) {
-        mode = 'evening';
-        baseFreq = 97.99; // G2 (Warm/Melancholy)
-    } else {
-        mode = 'night';
-        baseFreq = 55.00; // A1 (Deep/Sleep)
-    }
+    if (hour >= 5 && hour < 12) { mode = 'morning'; baseFreq = 146.83; }
+    else if (hour >= 12 && hour < 17) { mode = 'day'; baseFreq = 110.00; }
+    else if (hour >= 17 && hour < 21) { mode = 'evening'; baseFreq = 97.99; }
+    else { mode = 'night'; baseFreq = 55.00; }
     
     setTimeMode(mode);
-
     osc1.frequency.value = baseFreq;
-    osc2.frequency.value = baseFreq + 2; // Slight detune for warmth
+    osc2.frequency.value = baseFreq + 2; 
     
     const droneFilter = ctx.createBiquadFilter();
-    droneFilter.type = 'lowpass';
-    droneFilter.frequency.value = 400; 
-
-    osc1.connect(droneFilter);
-    osc2.connect(droneFilter);
+    droneFilter.type = 'lowpass'; droneFilter.frequency.value = 400; 
+    
+    osc1.connect(droneFilter); osc2.connect(droneFilter);
     droneFilter.connect(droneGain);
-    droneGain.connect(ctx.destination);
-    osc1.start(0);
-    osc2.start(0);
+    osc1.start(0); osc2.start(0);
 
     // 3. RUMBLE
     const rumbleSrc = createBrownNoise(ctx);
     rumbleSrc.connect(rumbleGain);
-    rumbleGain.connect(ctx.destination);
     rumbleSrc.start(0);
 
     nodes.current = { rain: rainGain, drone: droneGain, rumble: rumbleGain }
@@ -128,7 +120,14 @@ function App() {
     }
   }
 
-  // --- VISUALS ---
+  // PRESETS
+  const applyPreset = (p) => {
+    if(p === 'focus') { handleVol('rain', 0.2); handleVol('drone', 0.1); handleVol('rumble', 0.0); }
+    if(p === 'sleep') { handleVol('rain', 0.5); handleVol('drone', 0.05); handleVol('rumble', 0.4); }
+    if(p === 'storm') { handleVol('rain', 0.8); handleVol('drone', 0.0); handleVol('rumble', 0.6); }
+  }
+
+  // CANVAS ENGINE
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -146,59 +145,56 @@ function App() {
     });
 
     const draw = () => {
-        // DYNAMIC BACKGROUND COLOR
         let bgColor = '#000';
-        let rainColor = '#0f0'; // Default Matrix Green
+        let accent = '#fff';
 
-        if (timeMode === 'morning') {
-            bgColor = '#00151f'; // Deep Dawn Blue
-            rainColor = '#00a8ff'; // Cyan Rain
-        } else if (timeMode === 'day') {
-            bgColor = '#001000'; // Matrix Dark
-            rainColor = '#0f0'; // Retro Green
-        } else if (timeMode === 'evening') {
-            bgColor = '#1a0a00'; // Deep Sunset Rust
-            rainColor = '#ff5500'; // Amber Rain
-        } else {
-            bgColor = '#050508'; // Void Black
-            rainColor = '#444'; // Silver/Ghost Rain
-        }
+        // High-end Gradients
+        if (timeMode === 'morning') { bgColor = '#0f172a'; accent = '#38bdf8'; } // Dark Slate / Cyan
+        else if (timeMode === 'day') { bgColor = '#1e293b'; accent = '#a5b4fc'; } // Slate / Indigo
+        else if (timeMode === 'evening') { bgColor = '#271a12'; accent = '#fb923c'; } // Espresso / Orange
+        else { bgColor = '#000000'; accent = '#94a3b8'; } // Pure Black / Slate
 
+        // Clear
         ctx.fillStyle = bgColor;
         ctx.fillRect(0,0, canvas.width, canvas.height);
 
-        // Draw Rain
-        ctx.strokeStyle = rainColor;
+        // 1. Draw Waveform (The Visualizer)
+        if (analyserRef.current) {
+            const bufferLength = analyserRef.current.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyserRef.current.getByteTimeDomainData(dataArray);
+
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = accent;
+            ctx.beginPath();
+            const sliceWidth = canvas.width / bufferLength;
+            let x = 0;
+
+            for(let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] / 128.0; // range 0 to 2
+                const y = (v * (canvas.height/4)) + (canvas.height * 0.75); // Draw at bottom 1/4
+
+                if(i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            ctx.stroke();
+        }
+
+        // 2. Draw Rain
+        ctx.strokeStyle = accent;
         ctx.lineWidth = 1;
-        
         particles.forEach(p => {
-            const opacity = vols.rain > 0 ? vols.rain : 0.05;
+            const opacity = vols.rain > 0 ? vols.rain * 0.5 : 0;
             ctx.globalAlpha = opacity;
-            
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p.x, p.y + p.l);
             ctx.stroke();
 
-            p.y += p.s + (vols.rain * 10);
-            if (p.y > canvas.height) {
-                p.y = -20;
-                p.x = Math.random() * canvas.width;
-            }
+            p.y += p.s + (vols.rain * 15);
+            if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
         });
-
-        // Draw Drone "Horizon" Line
-        if (vols.drone > 0) {
-            ctx.globalAlpha = vols.drone * 0.3;
-            ctx.fillStyle = rainColor;
-            // A glowing horizon line that gets thicker with volume
-            const horizonY = canvas.height * 0.7;
-            ctx.fillRect(0, horizonY, canvas.width, vols.drone * 50);
-            
-            // Reflection
-            ctx.globalAlpha = vols.drone * 0.1;
-            ctx.fillRect(0, horizonY + (vols.drone * 60), canvas.width, vols.drone * 20);
-        }
 
         frameId = requestAnimationFrame(draw);
     }
@@ -213,8 +209,8 @@ function App() {
       
       {!started && (
         <div className="overlay">
-          <button className="btn-main" onClick={startEngine}>
-            Initialize Procedural Engine
+          <button className="btn-start" onClick={startEngine}>
+            Start Soundscape
           </button>
         </div>
       )}
@@ -222,31 +218,29 @@ function App() {
       {started && (
         <div className="app-container">
           <div className="control-box">
-            <h1>GENERATOR v1.1</h1>
-            <div className="status-bar" style={{color: 
-                timeMode === 'morning' ? '#00a8ff' : 
-                timeMode === 'evening' ? '#ff5500' : 
-                timeMode === 'night' ? '#888' : '#0f0'
-            }}>
-               CURRENT PHASE: {timeMode.toUpperCase()}
+            <h1>Lofi Gen.</h1>
+            <div className="subtitle">Current Phase: {timeMode}</div>
+
+            {/* PRESETS */}
+            <div className="preset-row">
+                <button className="btn-preset" onClick={() => applyPreset('focus')}>Focus</button>
+                <button className="btn-preset" onClick={() => applyPreset('sleep')}>Sleep</button>
+                <button className="btn-preset" onClick={() => applyPreset('storm')}>Storm</button>
             </div>
 
-            <div className="slider-row">
-              <span className="label">RAIN</span>
-              <input type="range" min="0" max="1" step="0.01" 
-                     value={vols.rain} onChange={e => handleVol('rain', e.target.value)} />
+            <div className="slider-group">
+              <div className="slider-label"><span>Rain Texture</span><span>{(vols.rain * 100).toFixed(0)}%</span></div>
+              <input type="range" min="0" max="1" step="0.01" value={vols.rain} onChange={e => handleVol('rain', e.target.value)} />
             </div>
 
-            <div className="slider-row">
-              <span className="label">SYNTH</span>
-              <input type="range" min="0" max="0.5" step="0.01" 
-                     value={vols.drone} onChange={e => handleVol('drone', e.target.value)} />
+            <div className="slider-group">
+              <div className="slider-label"><span>Synth Drone</span><span>{(vols.drone * 100).toFixed(0)}%</span></div>
+              <input type="range" min="0" max="0.5" step="0.01" value={vols.drone} onChange={e => handleVol('drone', e.target.value)} />
             </div>
 
-            <div className="slider-row">
-              <span className="label">RUMBLE</span>
-              <input type="range" min="0" max="1" step="0.01" 
-                     value={vols.rumble} onChange={e => handleVol('rumble', e.target.value)} />
+            <div className="slider-group">
+              <div className="slider-label"><span>Deep Rumble</span><span>{(vols.rumble * 100).toFixed(0)}%</span></div>
+              <input type="range" min="0" max="1" step="0.01" value={vols.rumble} onChange={e => handleVol('rumble', e.target.value)} />
             </div>
           </div>
         </div>
