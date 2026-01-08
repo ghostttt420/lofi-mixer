@@ -5,7 +5,7 @@ function App() {
   const [started, setStarted] = useState(false)
   const [timeMode, setTimeMode] = useState('day') 
   
-  // 1. PERSISTENCE: Load from LocalStorage or default to 0
+  // Load saved volume or default to 0
   const [vols, setVols] = useState(() => {
     const saved = localStorage.getItem('lofi-vols')
     return saved ? JSON.parse(saved) : { rain: 0, drone: 0, rumble: 0 }
@@ -16,7 +16,6 @@ function App() {
   const analyserRef = useRef(null) 
   const canvasRef = useRef(null)
 
-  // Save to LocalStorage whenever vols change
   useEffect(() => {
     localStorage.setItem('lofi-vols', JSON.stringify(vols))
   }, [vols])
@@ -45,23 +44,6 @@ function App() {
     return noise;
   }
 
-  const createBrownNoise = (ctx) => {
-    const bufferSize = 2 * ctx.sampleRate;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const output = buffer.getChannelData(0);
-    let lastOut = 0;
-    for (let i = 0; i < bufferSize; i++) {
-        const white = Math.random() * 2 - 1;
-        output[i] = (lastOut + (0.02 * white)) / 1.02;
-        lastOut = output[i];
-        output[i] *= 3.5; 
-    }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-    noise.loop = true;
-    return noise;
-  }
-
   const startEngine = () => {
     const Ctx = window.AudioContext || window.webkitAudioContext
     const ctx = new Ctx()
@@ -72,7 +54,7 @@ function App() {
     analyser.connect(ctx.destination)
     analyserRef.current = analyser
 
-    const rainGain = ctx.createGain(); rainGain.gain.value = vols.rain; // Load saved vol
+    const rainGain = ctx.createGain(); rainGain.gain.value = vols.rain;
     const droneGain = ctx.createGain(); droneGain.gain.value = vols.drone;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = vols.rumble;
 
@@ -80,15 +62,17 @@ function App() {
     droneGain.connect(analyser)
     rumbleGain.connect(analyser)
 
+    // 1. RAIN (Standard Pink Noise)
     const rainSrc = createPinkNoise(ctx);
     rainSrc.connect(rainGain);
     rainSrc.start(0);
 
+    // 2. DRONE (Oscillators)
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     osc1.type = 'sine'; osc2.type = 'triangle'; 
     
-    // Time Logic
+    // Time Logic for Pitch
     const hour = new Date().getHours();
     let baseFreq = 110; 
     let mode = 'day';
@@ -109,8 +93,17 @@ function App() {
     droneFilter.connect(droneGain);
     osc1.start(0); osc2.start(0);
 
-    const rumbleSrc = createBrownNoise(ctx);
-    rumbleSrc.connect(rumbleGain);
+    // 3. RUMBLE (FIXED: Filtered Pink Noise instead of Brown Noise)
+    // We use Pink noise because it has more "Audible Energy" for laptops/phones.
+    // We filter it heavily to make it sound "Dark".
+    const rumbleSrc = createPinkNoise(ctx); 
+    
+    const rumbleFilter = ctx.createBiquadFilter();
+    rumbleFilter.type = 'lowpass';
+    rumbleFilter.frequency.value = 350; // Cut off highs so it sounds deep, but keeps mids
+    
+    rumbleSrc.connect(rumbleFilter);
+    rumbleFilter.connect(rumbleGain);
     rumbleSrc.start(0);
 
     nodes.current = { rain: rainGain, drone: droneGain, rumble: rumbleGain }
@@ -136,12 +129,11 @@ function App() {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     let frameId;
-    let lightningTimer = 0; // NEW: Timer for flash
+    let lightningTimer = 0;
     
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    // Assets
     const rainParticles = [];
     for(let i=0; i<100; i++) rainParticles.push({
         x: Math.random() * canvas.width, y: Math.random() * canvas.height,
@@ -173,13 +165,9 @@ function App() {
         ctx.fillStyle = bgColor;
         ctx.fillRect(0,0, canvas.width, canvas.height);
 
-        // 2. LIGHTNING FLASH
-        // Logic: If rumble is loud (>0.5), random chance to flash
+        // LIGHTNING
         if (vols.rumble > 0.5) {
-            // The louder the rumble, the higher the chance
-            if (Math.random() < 0.005 * (vols.rumble * 2)) {
-                lightningTimer = 5; // Flash for 5 frames
-            }
+            if (Math.random() < 0.005 * (vols.rumble * 2)) lightningTimer = 5;
         }
         if (lightningTimer > 0) {
             ctx.fillStyle = `rgba(255, 255, 255, ${lightningTimer * 0.1})`;
@@ -187,12 +175,12 @@ function App() {
             lightningTimer--;
         }
 
-        // 3. SUN/MOON
+        // CELESTIAL BODY
         ctx.shadowBlur = 50; ctx.shadowColor = sunColor; ctx.fillStyle = sunColor; ctx.beginPath();
         const sunY = timeMode === 'morning' ? canvas.height*0.2 : timeMode === 'day' ? canvas.height*0.1 : canvas.height*0.15;
         ctx.arc(canvas.width * 0.8, sunY, 40, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
 
-        // 4. CLOUDS
+        // CLOUDS
         if (isDay || timeMode === 'evening') {
             ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
             clouds.forEach(c => {
@@ -203,7 +191,7 @@ function App() {
             });
         }
 
-        // 5. STARS
+        // STARS
         if (!isDay || timeMode === 'evening') {
             ctx.fillStyle = 'white';
             stars.forEach(s => {
@@ -220,7 +208,7 @@ function App() {
             }
         }
 
-        // 6. WAVEFORM
+        // WAVEFORM
         if (analyserRef.current) {
             const bufferLength = analyserRef.current.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
@@ -234,7 +222,7 @@ function App() {
             ctx.stroke();
         }
 
-        // 7. RAIN
+        // RAIN
         ctx.strokeStyle = accent; ctx.lineWidth = 1;
         rainParticles.forEach(p => {
             const opacity = vols.rain > 0 ? vols.rain * 0.5 : 0;
