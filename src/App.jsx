@@ -2,12 +2,34 @@ import { useState, useRef, useEffect } from 'react'
 import './App.css'
 
 // Using reliable CDN links for demo purposes
+// Google's high-speed sound servers (OGG format)
 const SOUNDS = [
-  { id: 'rain', emoji: '🌧️', name: 'Heavy Rain', url: 'https://cdn.pixabay.com/audio/2022/07/04/audio_306283b7e7.mp3' },
-  { id: 'fire', emoji: '🔥', name: 'Campfire', url: 'https://cdn.pixabay.com/audio/2022/01/18/audio_d0a13f69d2.mp3' },
-  { id: 'birds', emoji: '🐦', name: 'Morning Birds', url: 'https://cdn.pixabay.com/audio/2022/02/07/audio_658428461c.mp3' },
-  { id: 'ocean', emoji: '🌊', name: 'Ocean Waves', url: 'https://cdn.pixabay.com/audio/2022/03/09/audio_84501f2e6e.mp3' }
+  { 
+    id: 'rain', 
+    emoji: '🌧️', 
+    name: 'Heavy Rain', 
+    url: 'https://actions.google.com/sounds/v1/weather/rain_heavy_loud.ogg' 
+  },
+  { 
+    id: 'fire', 
+    emoji: '🔥', 
+    name: 'Campfire', 
+    url: 'https://actions.google.com/sounds/v1/ambiences/fire.ogg' 
+  },
+  { 
+    id: 'birds', 
+    emoji: '🐦', 
+    name: 'Morning Birds', 
+    url: 'https://actions.google.com/sounds/v1/animals/birds_forest_morning.ogg' 
+  },
+  { 
+    id: 'ocean', 
+    emoji: '🌊', 
+    name: 'Ocean Waves', 
+    url: 'https://actions.google.com/sounds/v1/water/waves_crashing_on_rock_beach.ogg' 
+  }
 ]
+
 
 function App() {
   // We keep track of volume for each sound (0 to 1)
