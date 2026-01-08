@@ -11,7 +11,7 @@ function App() {
   const analyserRef = useRef(null) 
   const canvasRef = useRef(null)
 
-  // --- AUDIO GENERATORS ---
+  // --- AUDIO ENGINE (Unchanged) ---
   const createPinkNoise = (ctx) => {
     const bufferSize = 2 * ctx.sampleRate;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -121,7 +121,7 @@ function App() {
     if(p === 'storm') { handleVol('rain', 0.8); handleVol('drone', 0.0); handleVol('rumble', 0.6); }
   }
 
-  // CANVAS ENGINE
+  // --- CANVAS VISUAL ENGINE ---
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -130,16 +130,19 @@ function App() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    // --- PARTICLE SYSTEMS ---
-    const particles = []; // Rain
-    for(let i=0; i<100; i++) particles.push({
+    // --- ASSETS INITIALIZATION ---
+    
+    // 1. Rain
+    const rainParticles = [];
+    for(let i=0; i<100; i++) rainParticles.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
         s: Math.random() * 2 + 0.5, 
         l: Math.random() * 20 + 5   
     });
 
-    const stars = []; // Static Stars
+    // 2. Stars (Night Only)
+    const stars = [];
     for(let i=0; i<150; i++) stars.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
@@ -148,27 +151,79 @@ function App() {
         offset: Math.random() * Math.PI
     });
 
-    let shootingStar = null; // One active shooting star at a time
+    // 3. Clouds (Day Only) - Clusters of circles
+    const clouds = [];
+    for(let i=0; i<5; i++) {
+        clouds.push({
+            x: Math.random() * canvas.width,
+            y: (Math.random() * canvas.height) * 0.5, // Top half only
+            speed: (Math.random() * 0.2) + 0.1,
+            size: (Math.random() * 50) + 50,
+            puffs: 5 // number of circles per cloud
+        });
+    }
+
+    let shootingStar = null; 
 
     const draw = () => {
         let bgColor = '#000';
         let accent = '#fff';
+        let sunColor = '#fff';
+        let isDay = false;
 
-        // Gradients based on time
-        if (timeMode === 'morning') { bgColor = '#0f172a'; accent = '#38bdf8'; } 
-        else if (timeMode === 'day') { bgColor = '#1e293b'; accent = '#a5b4fc'; } 
-        else if (timeMode === 'evening') { bgColor = '#271a12'; accent = '#fb923c'; } 
-        else { bgColor = '#020205'; accent = '#94a3b8'; } // Darker void for night
+        // --- PALETTE MANAGER ---
+        if (timeMode === 'morning') { 
+            bgColor = '#0f172a'; accent = '#38bdf8'; sunColor = '#fcd34d'; // Yellow Sun
+            isDay = true;
+        } else if (timeMode === 'day') { 
+            bgColor = '#1e293b'; accent = '#a5b4fc'; sunColor = '#fdba74'; // Orange Sun
+            isDay = true;
+        } else if (timeMode === 'evening') { 
+            bgColor = '#271a12'; accent = '#fb923c'; sunColor = '#ea580c'; // Red Sun
+            isDay = false; // Transitioning
+        } else { 
+            bgColor = '#020205'; accent = '#94a3b8'; sunColor = '#f8fafc'; // White Moon
+            isDay = false;
+        }
 
-        // Clear
+        // Clear Screen
         ctx.fillStyle = bgColor;
         ctx.fillRect(0,0, canvas.width, canvas.height);
 
-        // 1. DRAW STARS (Only Night/Evening)
-        if (timeMode === 'night' || timeMode === 'evening') {
+        // --- 1. DRAW CELESTIAL BODY (SUN / MOON) ---
+        ctx.shadowBlur = 50;
+        ctx.shadowColor = sunColor;
+        ctx.fillStyle = sunColor;
+        ctx.beginPath();
+        // Position changes slightly based on mode (simulating arc)
+        const sunY = timeMode === 'morning' ? canvas.height * 0.2 : 
+                     timeMode === 'day' ? canvas.height * 0.1 : 
+                     canvas.height * 0.15;
+        ctx.arc(canvas.width * 0.8, sunY, 40, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0; // Reset shadow
+
+        // --- 2. DRAW CLOUDS (Morning/Day) ---
+        if (isDay || timeMode === 'evening') {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            clouds.forEach(cloud => {
+                // Draw Cloud Cluster
+                for(let j=0; j<cloud.puffs; j++) {
+                    ctx.beginPath();
+                    // Offset puff positions
+                    ctx.arc(cloud.x + (j*30), cloud.y + (Math.sin(j)*10), cloud.size, 0, Math.PI*2);
+                    ctx.fill();
+                }
+                // Move Cloud
+                cloud.x += cloud.speed;
+                if(cloud.x > canvas.width + 100) cloud.x = -200;
+            });
+        }
+
+        // --- 3. DRAW STARS (Night/Evening) ---
+        if (!isDay || timeMode === 'evening') {
             ctx.fillStyle = 'white';
             stars.forEach(star => {
-                // Twinkle Math
                 const opacity = 0.3 + Math.abs(Math.sin(Date.now() * 0.002 + star.offset)) * 0.7;
                 ctx.globalAlpha = opacity;
                 ctx.beginPath();
@@ -177,38 +232,26 @@ function App() {
             });
             ctx.globalAlpha = 1.0;
 
-            // SHOOTING STAR LOGIC
-            if (!shootingStar) {
-                // 0.5% chance per frame to spawn a shooting star
-                if (Math.random() < 0.005) {
-                    shootingStar = {
-                        x: Math.random() * canvas.width,
-                        y: Math.random() * (canvas.height / 2),
-                        vx: (Math.random() * 10) + 5, // velocity X
-                        vy: (Math.random() * 2) + 1,  // velocity Y
-                        len: 0
-                    };
-                }
-            } else {
-                // Draw Shooting Star
+            // Shooting Star Logic
+            if (!shootingStar && Math.random() < 0.005) {
+                shootingStar = {
+                    x: Math.random() * canvas.width, y: Math.random() * (canvas.height/2),
+                    vx: 15, vy: 2, len: 0
+                };
+            }
+            if(shootingStar) {
                 ctx.strokeStyle = '#fff';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.moveTo(shootingStar.x, shootingStar.y);
                 ctx.lineTo(shootingStar.x - shootingStar.len, shootingStar.y - (shootingStar.len * 0.2));
                 ctx.stroke();
-
-                // Move it
-                shootingStar.x += shootingStar.vx;
-                shootingStar.y += shootingStar.vy;
-                shootingStar.len += 2; // Tail grows
-
-                // Despawn if off screen
-                if (shootingStar.x > canvas.width + 100) shootingStar = null;
+                shootingStar.x += shootingStar.vx; shootingStar.y += shootingStar.vy; shootingStar.len += 2;
+                if (shootingStar.x > canvas.width + 200) shootingStar = null;
             }
         }
 
-        // 2. WAVEFORM
+        // --- 4. WAVEFORM (Visualizer) ---
         if (analyserRef.current) {
             const bufferLength = analyserRef.current.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
@@ -219,29 +262,25 @@ function App() {
             ctx.beginPath();
             const sliceWidth = canvas.width / bufferLength;
             let x = 0;
-
             for(let i = 0; i < bufferLength; i++) {
                 const v = dataArray[i] / 128.0; 
                 const y = (v * (canvas.height/4)) + (canvas.height * 0.75);
-
-                if(i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
+                if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
                 x += sliceWidth;
             }
             ctx.stroke();
         }
 
-        // 3. DRAW RAIN
+        // --- 5. RAIN (Overlay) ---
         ctx.strokeStyle = accent;
         ctx.lineWidth = 1;
-        particles.forEach(p => {
+        rainParticles.forEach(p => {
             const opacity = vols.rain > 0 ? vols.rain * 0.5 : 0;
             ctx.globalAlpha = opacity;
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p.x, p.y + p.l);
             ctx.stroke();
-
             p.y += p.s + (vols.rain * 15);
             if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
         });
