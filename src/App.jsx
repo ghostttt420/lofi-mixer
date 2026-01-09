@@ -5,7 +5,6 @@ function App() {
   const [started, setStarted] = useState(false)
   const [timeMode, setTimeMode] = useState('day') 
   
-  // ADDED: fire and thunder to state
   const [vols, setVols] = useState(() => {
     try {
       const saved = localStorage.getItem('lofi-vols')
@@ -18,8 +17,8 @@ function App() {
         chords: parsed.chords || 0, 
         bass: parsed.bass || 0, 
         vinyl: parsed.vinyl || 0,
-        fire: parsed.fire || 0,      // NEW
-        thunder: parsed.thunder || 0 // NEW
+        fire: parsed.fire || 0,
+        thunder: parsed.thunder || 0
       }
     } catch (e) {
       return { rain: 0, drone: 0, rumble: 0, beats: 0, chords: 0, bass: 0, vinyl: 0, fire: 0, thunder: 0 }
@@ -36,11 +35,8 @@ function App() {
   const current16thNote = useRef(0)
   const schedulerTimer = useRef(null)
   const tempo = 80 
-  
   const barCount = useRef(0) 
   const driftOffset = useRef(0) 
-
-  // NEW: Fire Visual Ref
   const lightningTrigger = useRef(0)
 
   useEffect(() => {
@@ -49,8 +45,23 @@ function App() {
   }, [vols])
 
   // =========================================================
-  // AUDIO HELPERS (SYNTHESIS)
+  // AUDIO DSP HELPERS (The "Lofi" Magic)
   // =========================================================
+  
+  // 1. SOFT CLIPPER (Saturation Curve)
+  // This creates that "Warm Analog Tape" distortion
+  const makeDistortionCurve = (amount) => {
+    const k = typeof amount === 'number' ? amount : 50;
+    const n_samples = 44100;
+    const curve = new Float32Array(n_samples);
+    const deg = Math.PI / 180;
+    for (let i = 0; i < n_samples; ++i) {
+      const x = i * 2 / n_samples - 1;
+      curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
+    }
+    return curve;
+  }
+
   const createPinkNoise = (ctx) => {
     const bufferSize = 2 * ctx.sampleRate;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -84,42 +95,33 @@ function App() {
     noise.buffer = buffer; noise.loop = true; return noise;
   }
 
-  // NEW: Fire Sound (Filtered Crackle)
   const createFireSound = (ctx) => {
     const bufferSize = ctx.sampleRate * 2;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
-         // More frequent, softer pops than vinyl
          if(Math.random() > 0.95) data[i] = Math.random() * 0.3;
-         else data[i] = Math.random() * 0.02; // underlying hiss
+         else data[i] = Math.random() * 0.02; 
     }
     const noise = ctx.createBufferSource();
     noise.buffer = buffer; noise.loop = true; return noise;
   }
 
-  // NEW: One-Shot Thunder
   const triggerThunder = (ctx, vol) => {
       const osc = ctx.createOscillator(); osc.type = 'sawtooth';
       const gain = ctx.createGain();
       const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 200;
-
-      // Noise Burst
       const bufferSize = ctx.sampleRate * 1; 
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i=0; i<bufferSize; i++) data[i] = Math.random() * 2 - 1;
       const noise = ctx.createBufferSource(); noise.buffer = buffer;
-
-      noise.connect(filter); filter.connect(gain); gain.connect(nodes.current.masterGain);
-      
-      // Explosion Envelope
+      noise.connect(filter); filter.connect(gain); gain.connect(nodes.current.mixer);
       const time = ctx.currentTime;
       gain.gain.setValueAtTime(vol, time);
-      gain.gain.exponentialRampToValueAtTime(0.01, time + 2.5); // Long fade
-
+      gain.gain.exponentialRampToValueAtTime(0.01, time + 2.5); 
       noise.start(time);
-      lightningTrigger.current = 10; // Trigger Visual Flash (10 frames)
+      lightningTrigger.current = 10; 
   }
 
   // =========================================================
@@ -128,7 +130,8 @@ function App() {
   const playKick = (ctx, time, vol) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(nodes.current.masterGain);
+    // Connect to MIXER (which goes to Master Chain)
+    osc.connect(gain); gain.connect(nodes.current.mixer);
     const pitchVar = Math.random() * 10 - 5; 
     osc.frequency.setValueAtTime(150 + pitchVar, time);
     osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.5);
@@ -140,7 +143,7 @@ function App() {
 
   const playSnare = (ctx, time, vol) => {
     const osc = ctx.createOscillator(); osc.type = 'triangle';
-    const gainOsc = ctx.createGain(); osc.connect(gainOsc); gainOsc.connect(nodes.current.masterGain);
+    const gainOsc = ctx.createGain(); osc.connect(gainOsc); gainOsc.connect(nodes.current.mixer);
     const bufferSize = ctx.sampleRate * 0.5;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -148,7 +151,7 @@ function App() {
     const noise = ctx.createBufferSource(); noise.buffer = buffer;
     const gainNoise = ctx.createGain();
     const filter = ctx.createBiquadFilter(); filter.type = 'highpass'; filter.frequency.value = 1000;
-    noise.connect(filter); filter.connect(gainNoise); gainNoise.connect(nodes.current.masterGain);
+    noise.connect(filter); filter.connect(gainNoise); gainNoise.connect(nodes.current.mixer);
     const pitchVar = Math.random() * 20 - 10;
     osc.frequency.setValueAtTime(250 + pitchVar, time);
     const vel = vol * (0.8 + Math.random() * 0.3);
@@ -166,7 +169,7 @@ function App() {
     const freqVar = 6000 + Math.random() * 2000;
     const filter = ctx.createBiquadFilter(); filter.type = 'highpass'; filter.frequency.value = freqVar;
     const gain = ctx.createGain();
-    noise.connect(filter); filter.connect(gain); gain.connect(nodes.current.masterGain);
+    noise.connect(filter); filter.connect(gain); gain.connect(nodes.current.mixer);
     const vel = vol * (0.5 + Math.random() * 0.5);
     gain.gain.setValueAtTime(vel * 0.6, time); gain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
     noise.start(time); noise.stop(time + 0.05);
@@ -174,20 +177,17 @@ function App() {
 
   const playChord = (ctx, time, vol, chordIndex) => {
     const chords = [
-        [349.23, 440.00, 523.25, 659.25], 
-        [329.63, 392.00, 493.88, 587.33], 
-        [293.66, 349.23, 440.00, 523.25], 
-        [261.63, 329.63, 392.00, 493.88]  
+        [349.23, 440.00, 523.25, 659.25], [329.63, 392.00, 493.88, 587.33], 
+        [293.66, 349.23, 440.00, 523.25], [261.63, 329.63, 392.00, 493.88]  
     ];
     let notes = chords[chordIndex % 4];
     if (barCount.current % 8 === 7) notes = notes.map(n => n * 1.5); 
-
     notes.forEach((freq, i) => {
         const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = 'triangle'; 
         const lfo = ctx.createOscillator(); lfo.frequency.value = 2; 
         const lfoGain = ctx.createGain(); lfoGain.gain.value = 2; 
         lfo.connect(lfoGain); lfoGain.connect(osc.frequency); lfo.start(time);
-        osc.frequency.value = freq; osc.connect(gain); gain.connect(nodes.current.masterGain);
+        osc.frequency.value = freq; osc.connect(gain); gain.connect(nodes.current.mixer);
         const strumDelay = i * 0.05 + (Math.random() * 0.02); const startTime = time + strumDelay;
         gain.gain.setValueAtTime(0, startTime);
         gain.gain.linearRampToValueAtTime(vol * 0.1, startTime + 0.1); 
@@ -199,7 +199,7 @@ function App() {
   const playBass = (ctx, time, vol, chordIndex) => {
     const roots = [87.31, 82.41, 73.42, 65.41]; const freq = roots[chordIndex % 4];
     const osc = ctx.createOscillator(); osc.type = 'sine'; const gain = ctx.createGain();
-    osc.frequency.setValueAtTime(freq, time); osc.connect(gain); gain.connect(nodes.current.masterGain);
+    osc.frequency.setValueAtTime(freq, time); osc.connect(gain); gain.connect(nodes.current.mixer);
     if (Math.random() > 0.7) { osc.frequency.setValueAtTime(freq - 10, time); osc.frequency.linearRampToValueAtTime(freq, time + 0.1); }
     gain.gain.setValueAtTime(0, time); gain.gain.linearRampToValueAtTime(vol * 0.6, time + 0.1); 
     gain.gain.exponentialRampToValueAtTime(0.01, time + 1.5); osc.start(time); osc.stop(time + 1.6);
@@ -240,59 +240,41 @@ function App() {
     vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
     vinylSrc.start(0);
     
-    // 5. Fire (NEW)
+    // 5. Fire
     const fireSrc = createFireSound(ctx);
     const fireGain = ctx.createGain(); fireGain.gain.value = volsRef.current.fire;
-    const fireFilter = ctx.createBiquadFilter(); fireFilter.type = 'lowpass'; fireFilter.frequency.value = 3000; // Muffle it slightly
+    const fireFilter = ctx.createBiquadFilter(); fireFilter.type = 'lowpass'; fireFilter.frequency.value = 3000; 
     fireSrc.connect(fireFilter).connect(fireGain).connect(dest);
     fireSrc.start(0);
 
     nodes.current.rain = rainGain; nodes.current.drone = droneGain;
-    nodes.current.rumble = rumbleGain; nodes.current.vinyl = vinylGain;
-    nodes.current.fire = fireGain; // Store
+    nodes.current.rumble = rumbleGain; nodes.current.vinyl = vinylGain; nodes.current.fire = fireGain;
   }
 
-  // --- THE DRUM BRAIN (Multipattern) ---
   const scheduleNote = (beatNumber, time) => {
     const currentVols = volsRef.current;
     const humanize = (Math.random() * 0.015);
     const humanTime = time + humanize;
-
-    // PATTERN LOGIC: Switch patterns every 4 bars
     const currentBar = barCount.current;
-    const patternType = Math.floor(currentBar / 4) % 3; // 0, 1, or 2
+    const patternType = Math.floor(currentBar / 4) % 3;
     
-    // THUNDER LOGIC (Random trigger)
-    if (currentVols.thunder > 0) {
-        // 1% chance every 16th note to crash thunder
-        if (Math.random() < 0.01) triggerThunder(audioCtx.current, currentVols.thunder);
-    }
+    if (currentVols.thunder > 0 && Math.random() < 0.01) triggerThunder(audioCtx.current, currentVols.thunder);
 
     if (currentVols.beats > 0) {
-        // --- PATTERN 0: Standard Boom Bap ---
         if (patternType === 0) {
             if (beatNumber === 0 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
-        }
-        // --- PATTERN 1: Syncopated (Dilla) ---
-        else if (patternType === 1) {
+        } else if (patternType === 1) {
              if (beatNumber === 0 || beatNumber === 7 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
-        }
-        // --- PATTERN 2: Minimal/Break ---
-        else {
+        } else {
              if (beatNumber === 0) playKick(audioCtx.current, humanTime, currentVols.beats);
-             if (beatNumber === 4) playSnare(audioCtx.current, humanTime, currentVols.beats); // Half time feel
-             // Fast Hats
+             if (beatNumber === 4) playSnare(audioCtx.current, humanTime, currentVols.beats); 
              if (Math.random() > 0.3) playHiHat(audioCtx.current, humanTime, currentVols.beats * 0.7);
         }
-
-        // FILLS (Last bar of any section)
-        if (currentBar % 4 === 3 && beatNumber > 12) {
-             playSnare(audioCtx.current, humanTime, currentVols.beats * 0.6); // Snare roll at end
-        }
+        if (currentBar % 4 === 3 && beatNumber > 12) playSnare(audioCtx.current, humanTime, currentVols.beats * 0.6); 
     }
 
     if (beatNumber === 0) {
@@ -312,7 +294,6 @@ function App() {
         nextNoteTime.current += 0.25 * secondsPerBeat + (isSwing ? swing : 0);
         current16thNote.current = (current16thNote.current + 1) % 16;
     }
-    // Modulate Drone
     if (nodes.current.drone) {
         driftOffset.current += 0.001;
         const baseVol = volsRef.current.drone;
@@ -326,10 +307,40 @@ function App() {
         const Ctx = window.AudioContext || window.webkitAudioContext
         const ctx = new Ctx()
         audioCtx.current = ctx
-        const masterGain = ctx.createGain(); masterGain.gain.value = 1.0; masterGain.connect(ctx.destination);
-        const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; masterGain.connect(analyser); analyserRef.current = analyser;
-        nodes.current = { masterGain }
-        startAmbientLayers(ctx, masterGain);
+
+        // --- MASTERING CHAIN START ---
+        
+        // 1. Mixer (Everything connects here)
+        const mixer = ctx.createGain(); 
+        nodes.current.mixer = mixer;
+
+        // 2. Soft Clipper (Saturation)
+        const distortion = ctx.createWaveShaper();
+        distortion.curve = makeDistortionCurve(50); // Amount of warmth
+        distortion.oversample = '4x';
+
+        // 3. Compressor (Glue)
+        const compressor = ctx.createDynamicsCompressor();
+        compressor.threshold.value = -24;
+        compressor.knee.value = 30;
+        compressor.ratio.value = 12;
+        compressor.attack.value = 0.003;
+        compressor.release.value = 0.25;
+
+        // 4. Analyser (Visuals)
+        const analyser = ctx.createAnalyser(); 
+        analyser.fftSize = 2048;
+        analyserRef.current = analyser;
+
+        // Route: Mixer -> Distortion -> Compressor -> Analyser -> Speakers
+        mixer.connect(distortion);
+        distortion.connect(compressor);
+        compressor.connect(analyser);
+        analyser.connect(ctx.destination);
+        
+        // --- MASTERING CHAIN END ---
+
+        startAmbientLayers(ctx, mixer); // Pass Mixer, not Dest
         nextNoteTime.current = ctx.currentTime + 0.1;
         scheduler();
         setStarted(true)
@@ -370,8 +381,7 @@ function App() {
     for(let i=0; i<150; i++) stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: Math.random() * 1.5, blinkSpeed: Math.random() * 0.05, offset: Math.random() * Math.PI });
     const clouds = [];
     for(let i=0; i<5; i++) clouds.push({ x: Math.random() * canvas.width, y: (Math.random() * canvas.height) * 0.5, speed: (Math.random() * 0.2) + 0.1, size: (Math.random() * 50) + 50, puffs: 5 });
-    const fireParticles = []; // NEW FIRE PARTICLES
-    
+    const fireParticles = [];
     let shootingStar = null; 
 
     const draw = () => {
@@ -391,34 +401,23 @@ function App() {
 
         ctx.fillStyle = bgColor; ctx.fillRect(0,0, canvas.width, canvas.height);
 
-        // THUNDER FLASH (Managed by ref)
         if (lightningTrigger.current > 0) {
             ctx.fillStyle = `rgba(255, 255, 255, ${lightningTrigger.current * 0.1})`; 
             ctx.fillRect(0, 0, canvas.width, canvas.height); 
             lightningTrigger.current--;
         }
 
-        // FIRE PARTICLES
         if (vols.fire > 0) {
-            // Spawn new particles
             if (Math.random() < vols.fire) {
-                fireParticles.push({
-                    x: Math.random() * canvas.width, y: canvas.height + 10,
-                    size: Math.random() * 10 + 5, speed: Math.random() * 3 + 1,
-                    life: 1.0
-                });
+                fireParticles.push({ x: Math.random() * canvas.width, y: canvas.height + 10, size: Math.random() * 10 + 5, speed: Math.random() * 3 + 1, life: 1.0 });
             }
-            // Draw
             fireParticles.forEach((p, i) => {
-                ctx.fillStyle = `rgba(255, 100, 0, ${p.life})`; // Orange Fade
-                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
-                p.y -= p.speed; p.life -= 0.01; p.x += Math.sin(p.y * 0.1) * 0.5; // Wiggle
+                ctx.fillStyle = `rgba(255, 100, 0, ${p.life})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+                p.y -= p.speed; p.life -= 0.01; p.x += Math.sin(p.y * 0.1) * 0.5;
                 if (p.life <= 0) fireParticles.splice(i, 1);
             });
         }
 
-        // ... [REST OF VISUALS ARE SAME: CELESTIAL, CLOUDS, STARS, WAVE, RAIN] ...
-        // (Re-pasting compact version to save space but keep functionality)
         ctx.shadowBlur = 50; ctx.shadowColor = sunColor; ctx.fillStyle = sunColor; ctx.beginPath();
         const sunY = mode === 'morning' ? canvas.height*0.2 : mode === 'day' ? canvas.height*0.1 : canvas.height*0.15;
         ctx.arc(canvas.width * 0.8, sunY, 40, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
@@ -430,6 +429,7 @@ function App() {
                 c.x += c.speed; if(c.x > canvas.width + 100) c.x = -200;
             });
         }
+
         if (!isDay || mode === 'evening') {
             ctx.fillStyle = 'white';
             stars.forEach(s => {
@@ -445,6 +445,7 @@ function App() {
                 if (shootingStar.x > canvas.width + 200) shootingStar = null;
             }
         }
+
         if (analyserRef.current) {
             const bufferLength = analyserRef.current.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
@@ -457,6 +458,7 @@ function App() {
             }
             ctx.stroke();
         }
+
         ctx.strokeStyle = accent; ctx.lineWidth = 1;
         rainParticles.forEach(p => {
             const opacity = vols.rain > 0 ? vols.rain * 0.5 : 0;
