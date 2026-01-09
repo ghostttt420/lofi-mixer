@@ -48,6 +48,7 @@ function App() {
     // LIVE UPDATE: Master Tone Filter
     if(nodes.current.masterFilter) {
         // Map 0-1 slider to 200Hz-20000Hz logarithmic
+        // This allows you to "Roll off harsh highs" as requested
         const frequency = 200 * Math.pow(100, vols.tone);
         nodes.current.masterFilter.frequency.setTargetAtTime(frequency, audioCtx.current.currentTime, 0.1);
     }
@@ -224,7 +225,7 @@ function App() {
     let notes = chords[chordIndex % 4];
     if (barCount.current % 8 === 7) notes = notes.map(n => n * 1.5); 
     
-    // Use the Chord Filter Node
+    // Use the Chord Filter Node (for slow modulation)
     const chordFilter = nodes.current.chordFilter;
 
     notes.forEach((freq, i) => {
@@ -355,14 +356,19 @@ function App() {
         current16thNote.current = (current16thNote.current + 1) % 16;
     }
     
-    // SLOW MODULATION
-    driftOffset.current += 0.005; 
+    // SLOW MODULATION (Breathing)
+    driftOffset.current += 0.005; // Speed of breath
     const breath = Math.sin(driftOffset.current);
+
+    // 1. Modulate Drone Volume
     if (nodes.current.drone) {
         const baseVol = volsRef.current.drone;
         if(baseVol > 0) nodes.current.drone.gain.setTargetAtTime(Math.max(0, baseVol + breath * 0.05), audioCtx.current.currentTime, 0.1);
     }
+
+    // 2. Modulate Chord Filter (Opening and Closing) - NEW!
     if (nodes.current.chordFilter) {
+        // Sweep between 200Hz and 1200Hz
         const newFreq = 700 + (breath * 500); 
         nodes.current.chordFilter.frequency.setTargetAtTime(newFreq, audioCtx.current.currentTime, 0.1);
     }
@@ -381,17 +387,17 @@ function App() {
         const mixer = ctx.createGain(); 
         nodes.current.mixer = mixer;
 
-        // 2. Chord Filter
+        // 2. Chord Filter (Shared by all chords)
         const chordFilter = ctx.createBiquadFilter();
         chordFilter.type = 'lowpass';
         chordFilter.frequency.value = 600; chordFilter.Q.value = 1;
         chordFilter.connect(mixer);
         nodes.current.chordFilter = chordFilter;
 
-        // 3. Bit Crusher
+        // 3. Bit Crusher (The "Lofi" Effect)
         const bitCrusher = createBitCrusher(ctx);
         
-        // 4. Soft Clipper
+        // 4. Soft Clipper (Saturation)
         const distortion = ctx.createWaveShaper();
         distortion.curve = makeDistortionCurve(50); distortion.oversample = '4x';
 
