@@ -18,10 +18,12 @@ function App() {
         bass: parsed.bass || 0, 
         vinyl: parsed.vinyl || 0,
         fire: parsed.fire || 0,
-        thunder: parsed.thunder || 0
+        thunder: parsed.thunder || 0,
+        hiss: parsed.hiss || 0,       // NEW: Tape Hiss
+        tone: parsed.tone || 1        // NEW: Master Tone (1 = Bright, 0 = Dark)
       }
     } catch (e) {
-      return { rain: 0, drone: 0, rumble: 0, beats: 0, chords: 0, bass: 0, vinyl: 0, fire: 0, thunder: 0 }
+      return { rain: 0, drone: 0, rumble: 0, beats: 0, chords: 0, bass: 0, vinyl: 0, fire: 0, thunder: 0, hiss: 0, tone: 1 }
     }
   })
 
@@ -42,13 +44,19 @@ function App() {
   useEffect(() => {
     volsRef.current = vols
     localStorage.setItem('lofi-vols', JSON.stringify(vols))
+    
+    // LIVE UPDATE: Master Tone Filter
+    if(nodes.current.masterFilter) {
+        // Map 0-1 slider to 200Hz-20000Hz logarithmic
+        const frequency = 200 * Math.pow(100, vols.tone);
+        nodes.current.masterFilter.frequency.setTargetAtTime(frequency, audioCtx.current.currentTime, 0.1);
+    }
   }, [vols])
 
   // =========================================================
   // AUDIO DSP HELPERS 
   // =========================================================
   
-  // 1. SOFT CLIPPER (Saturation)
   const makeDistortionCurve = (amount) => {
     const k = typeof amount === 'number' ? amount : 50;
     const n_samples = 44100;
@@ -61,17 +69,14 @@ function App() {
     return curve;
   }
 
-  // 2. BIT CRUSHER (Digital Degradation) - NEW!
-  // This forces the smooth audio into "steps", creating that retro crunch.
   const createBitCrusher = (ctx) => {
     const bufferSize = 4096;
     const scriptNode = ctx.createScriptProcessor(bufferSize, 1, 1);
-    scriptNode.bits = 8; // 8-bit sound
-    scriptNode.normfreq = 0.1; // Downsample factor (0.1 = very lofi)
+    scriptNode.bits = 8; 
+    scriptNode.normfreq = 0.1; 
     let step = scriptNode.normfreq;
     let phaser = 0;
     let last = 0;
-
     scriptNode.onaudioprocess = function(e) {
         const input = e.inputBuffer.getChannelData(0);
         const output = e.outputBuffer.getChannelData(0);
@@ -106,6 +111,18 @@ function App() {
     }
     const noise = ctx.createBufferSource();
     noise.buffer = buffer; noise.loop = true; return noise;
+  }
+
+  // NEW: Pure White Noise for "Tape Hiss"
+  const createTapeHiss = (ctx) => {
+      const bufferSize = ctx.sampleRate * 2;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1; // Pure White Noise
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer; noise.loop = true; return noise;
   }
 
   const createVinylCrackle = (ctx) => {
@@ -207,8 +224,7 @@ function App() {
     let notes = chords[chordIndex % 4];
     if (barCount.current % 8 === 7) notes = notes.map(n => n * 1.5); 
     
-    // MASTER CHORD FILTER (Target for LFO modulation)
-    // All notes go into this filter before hitting the mixer
+    // Use the Chord Filter Node
     const chordFilter = nodes.current.chordFilter;
 
     notes.forEach((freq, i) => {
@@ -221,7 +237,7 @@ function App() {
         lfo.connect(lfoGain); lfoGain.connect(osc.frequency); lfo.start(time);
         
         osc.frequency.value = freq;
-        // CONNECT TO FILTER, NOT MIXER DIRECTLY
+        // Connect to Filter
         osc.connect(gain); gain.connect(chordFilter);
         
         const strumDelay = i * 0.05 + (Math.random() * 0.02); const startTime = time + strumDelay;
@@ -245,13 +261,13 @@ function App() {
   // ENGINE LOGIC
   // =========================================================
   const startAmbientLayers = (ctx, dest) => {
-    // Rain
+    // 1. Rain
     const rainSrc = createPinkNoise(ctx);
     const rainGain = ctx.createGain(); rainGain.gain.value = volsRef.current.rain;
     rainSrc.connect(rainGain).connect(dest);
     rainSrc.start(0);
 
-    // Drone
+    // 2. Drone
     const osc1 = ctx.createOscillator(); osc1.type = 'sine';
     const osc2 = ctx.createOscillator(); osc2.type = 'triangle';
     const hour = new Date().getHours();
@@ -262,29 +278,37 @@ function App() {
     osc1.connect(droneFilter); osc2.connect(droneFilter); droneFilter.connect(droneGain).connect(dest);
     osc1.start(0); osc2.start(0);
 
-    // Rumble
+    // 3. Rumble
     const rumbleSrc = createPinkNoise(ctx);
     const rumbleFilter = ctx.createBiquadFilter(); rumbleFilter.type = 'lowpass'; rumbleFilter.frequency.value = 350;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = volsRef.current.rumble;
     rumbleSrc.connect(rumbleFilter).connect(rumbleGain).connect(dest);
     rumbleSrc.start(0);
 
-    // Vinyl
+    // 4. Vinyl
     const vinylSrc = createVinylCrackle(ctx);
     const vinylGain = ctx.createGain(); vinylGain.gain.value = volsRef.current.vinyl;
     const vinylFilter = ctx.createBiquadFilter(); vinylFilter.type = 'highpass'; vinylFilter.frequency.value = 2000;
     vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
     vinylSrc.start(0);
     
-    // Fire
+    // 5. Fire
     const fireSrc = createFireSound(ctx);
     const fireGain = ctx.createGain(); fireGain.gain.value = volsRef.current.fire;
     const fireFilter = ctx.createBiquadFilter(); fireFilter.type = 'lowpass'; fireFilter.frequency.value = 3000; 
     fireSrc.connect(fireFilter).connect(fireGain).connect(dest);
     fireSrc.start(0);
 
+    // 6. Tape Hiss (NEW)
+    const hissSrc = createTapeHiss(ctx);
+    const hissGain = ctx.createGain(); hissGain.gain.value = volsRef.current.hiss || 0;
+    const hissFilter = ctx.createBiquadFilter(); hissFilter.type = 'lowpass'; hissFilter.frequency.value = 8000; // Soft hiss
+    hissSrc.connect(hissFilter).connect(hissGain).connect(dest);
+    hissSrc.start(0);
+
     nodes.current.rain = rainGain; nodes.current.drone = droneGain;
     nodes.current.rumble = rumbleGain; nodes.current.vinyl = vinylGain; nodes.current.fire = fireGain;
+    nodes.current.hiss = hissGain;
   }
 
   const scheduleNote = (beatNumber, time) => {
@@ -331,19 +355,14 @@ function App() {
         current16thNote.current = (current16thNote.current + 1) % 16;
     }
     
-    // SLOW MODULATION (Breathing)
-    driftOffset.current += 0.005; // Speed of breath
+    // SLOW MODULATION
+    driftOffset.current += 0.005; 
     const breath = Math.sin(driftOffset.current);
-
-    // 1. Modulate Drone Volume
     if (nodes.current.drone) {
         const baseVol = volsRef.current.drone;
         if(baseVol > 0) nodes.current.drone.gain.setTargetAtTime(Math.max(0, baseVol + breath * 0.05), audioCtx.current.currentTime, 0.1);
     }
-
-    // 2. Modulate Chord Filter (Opening and Closing) - NEW!
     if (nodes.current.chordFilter) {
-        // Sweep between 200Hz and 1200Hz
         const newFreq = 700 + (breath * 500); 
         nodes.current.chordFilter.frequency.setTargetAtTime(newFreq, audioCtx.current.currentTime, 0.1);
     }
@@ -358,44 +377,46 @@ function App() {
         audioCtx.current = ctx
 
         // MASTERING CHAIN
-        
         // 1. Mixer
         const mixer = ctx.createGain(); 
         nodes.current.mixer = mixer;
 
-        // 2. Chord Filter (Shared by all chords)
+        // 2. Chord Filter
         const chordFilter = ctx.createBiquadFilter();
         chordFilter.type = 'lowpass';
-        chordFilter.frequency.value = 600; 
-        chordFilter.Q.value = 1;
+        chordFilter.frequency.value = 600; chordFilter.Q.value = 1;
         chordFilter.connect(mixer);
         nodes.current.chordFilter = chordFilter;
 
-        // 3. Bit Crusher (The "Lofi" Effect) - NEW!
+        // 3. Bit Crusher
         const bitCrusher = createBitCrusher(ctx);
         
-        // 4. Soft Clipper (Saturation)
+        // 4. Soft Clipper
         const distortion = ctx.createWaveShaper();
-        distortion.curve = makeDistortionCurve(50); 
-        distortion.oversample = '4x';
+        distortion.curve = makeDistortionCurve(50); distortion.oversample = '4x';
 
-        // 5. Compressor (Glue)
+        // 5. MASTER FILTER (TONE CONTROL) - NEW
+        const masterFilter = ctx.createBiquadFilter();
+        masterFilter.type = 'lowpass';
+        masterFilter.frequency.value = 20000; // Start open
+        masterFilter.Q.value = 0.5;
+        nodes.current.masterFilter = masterFilter;
+
+        // 6. Compressor
         const compressor = ctx.createDynamicsCompressor();
-        compressor.threshold.value = -24;
-        compressor.knee.value = 30;
-        compressor.ratio.value = 12;
-        compressor.attack.value = 0.003;
-        compressor.release.value = 0.25;
+        compressor.threshold.value = -24; compressor.knee.value = 30; compressor.ratio.value = 12;
+        compressor.attack.value = 0.003; compressor.release.value = 0.25;
 
-        // 6. Analyser
+        // 7. Analyser
         const analyser = ctx.createAnalyser(); 
         analyser.fftSize = 2048;
         analyserRef.current = analyser;
 
-        // Route: Mixer -> BitCrusher -> Distortion -> Compressor -> Analyser -> Speakers
-        mixer.connect(bitCrusher); // Crunch it first
-        bitCrusher.connect(distortion); // Then warm it
-        distortion.connect(compressor); // Then glue it
+        // Route: Mixer -> BitCrusher -> Distortion -> MasterFilter -> Compressor -> Analyser -> Speakers
+        mixer.connect(bitCrusher);
+        bitCrusher.connect(distortion);
+        distortion.connect(masterFilter); // NEW
+        masterFilter.connect(compressor);
         compressor.connect(analyser);
         analyser.connect(ctx.destination);
         
@@ -417,10 +438,10 @@ function App() {
   }
 
   const applyPreset = (p) => {
-    if(p === 'focus') { handleVol('rain', 0.1); handleVol('drone', 0.1); handleVol('beats', 0.4); handleVol('chords', 0.2); handleVol('bass', 0.2); handleVol('vinyl', 0.1); handleVol('rumble', 0.0); handleVol('fire', 0.0); handleVol('thunder', 0.0); }
-    if(p === 'sleep') { handleVol('rain', 0.5); handleVol('drone', 0.1); handleVol('beats', 0.0); handleVol('chords', 0.0); handleVol('bass', 0.0); handleVol('vinyl', 0.05); handleVol('rumble', 0.4); handleVol('fire', 0.2); handleVol('thunder', 0.1); }
-    if(p === 'vibe')  { handleVol('rain', 0.1); handleVol('drone', 0.0); handleVol('beats', 0.6); handleVol('chords', 0.5); handleVol('bass', 0.5); handleVol('vinyl', 0.2); handleVol('rumble', 0.0); handleVol('fire', 0.0); handleVol('thunder', 0.0); }
-    if(p === 'storm') { handleVol('rain', 0.8); handleVol('drone', 0.0); handleVol('beats', 0.0); handleVol('chords', 0.0); handleVol('bass', 0.0); handleVol('vinyl', 0.0); handleVol('rumble', 0.6); handleVol('fire', 0.0); handleVol('thunder', 0.8); }
+    if(p === 'focus') { handleVol('rain', 0.1); handleVol('drone', 0.1); handleVol('beats', 0.4); handleVol('chords', 0.2); handleVol('bass', 0.2); handleVol('vinyl', 0.1); handleVol('hiss', 0.1); handleVol('tone', 0.6); handleVol('rumble', 0.0); handleVol('fire', 0.0); handleVol('thunder', 0.0); }
+    if(p === 'sleep') { handleVol('rain', 0.5); handleVol('drone', 0.1); handleVol('beats', 0.0); handleVol('chords', 0.0); handleVol('bass', 0.0); handleVol('vinyl', 0.05); handleVol('hiss', 0.2); handleVol('tone', 0.4); handleVol('rumble', 0.4); handleVol('fire', 0.2); handleVol('thunder', 0.1); }
+    if(p === 'vibe')  { handleVol('rain', 0.1); handleVol('drone', 0.0); handleVol('beats', 0.6); handleVol('chords', 0.5); handleVol('bass', 0.5); handleVol('vinyl', 0.2); handleVol('hiss', 0.15); handleVol('tone', 0.8); handleVol('rumble', 0.0); handleVol('fire', 0.0); handleVol('thunder', 0.0); }
+    if(p === 'storm') { handleVol('rain', 0.8); handleVol('drone', 0.0); handleVol('beats', 0.0); handleVol('chords', 0.0); handleVol('bass', 0.0); handleVol('vinyl', 0.0); handleVol('hiss', 0.0); handleVol('tone', 0.5); handleVol('rumble', 0.6); handleVol('fire', 0.0); handleVol('thunder', 0.8); }
   }
 
   // =========================================================
@@ -555,7 +576,12 @@ function App() {
             <div className="slider-group"> <div className="slider-label" style={{color: '#00f0ff'}}><span>Lofi Beats</span><span>{(vols.beats * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.beats} onChange={e => handleVol('beats', e.target.value)} /> </div>
             <div className="slider-group"> <div className="slider-label" style={{color: '#f0f'}}><span>Jazz Chords</span><span>{(vols.chords * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.chords} onChange={e => handleVol('chords', e.target.value)} /> </div>
             <div className="slider-group"> <div className="slider-label" style={{color: '#ffaa00'}}><span>Warm Bass</span><span>{(vols.bass * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.bass} onChange={e => handleVol('bass', e.target.value)} /> </div>
+            
             <div className="slider-group"> <div className="slider-label"><span>Rumble & Vinyl</span><span>{(vols.rumble * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.rumble} onChange={e => {handleVol('rumble', e.target.value); handleVol('vinyl', e.target.value); }} /> </div>
+            
+            {/* NEW TAPE & TONE SLIDERS */}
+            <div className="slider-group"> <div className="slider-label"><span>Tape Hiss</span><span>{(vols.hiss * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.hiss} onChange={e => handleVol('hiss', e.target.value)} /> </div>
+            <div className="slider-group"> <div className="slider-label" style={{color: '#00ff00'}}><span>Master Tone (Filter)</span><span>{(vols.tone * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.tone} onChange={e => handleVol('tone', e.target.value)} /> </div>
 
           </div>
         </div>
