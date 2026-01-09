@@ -45,11 +45,10 @@ function App() {
   }, [vols])
 
   // =========================================================
-  // AUDIO DSP HELPERS (The "Lofi" Magic)
+  // AUDIO DSP HELPERS 
   // =========================================================
   
-  // 1. SOFT CLIPPER (Saturation Curve)
-  // This creates that "Warm Analog Tape" distortion
+  // 1. SOFT CLIPPER (Saturation)
   const makeDistortionCurve = (amount) => {
     const k = typeof amount === 'number' ? amount : 50;
     const n_samples = 44100;
@@ -60,6 +59,32 @@ function App() {
       curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
     }
     return curve;
+  }
+
+  // 2. BIT CRUSHER (Digital Degradation) - NEW!
+  // This forces the smooth audio into "steps", creating that retro crunch.
+  const createBitCrusher = (ctx) => {
+    const bufferSize = 4096;
+    const scriptNode = ctx.createScriptProcessor(bufferSize, 1, 1);
+    scriptNode.bits = 8; // 8-bit sound
+    scriptNode.normfreq = 0.1; // Downsample factor (0.1 = very lofi)
+    let step = scriptNode.normfreq;
+    let phaser = 0;
+    let last = 0;
+
+    scriptNode.onaudioprocess = function(e) {
+        const input = e.inputBuffer.getChannelData(0);
+        const output = e.outputBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            phaser += step;
+            if (phaser >= 1.0) {
+                phaser -= 1.0;
+                last = step * Math.floor(input[i] / step + 0.5);
+            }
+            output[i] = last;
+        }
+    };
+    return scriptNode;
   }
 
   const createPinkNoise = (ctx) => {
@@ -130,7 +155,6 @@ function App() {
   const playKick = (ctx, time, vol) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    // Connect to MIXER (which goes to Master Chain)
     osc.connect(gain); gain.connect(nodes.current.mixer);
     const pitchVar = Math.random() * 10 - 5; 
     osc.frequency.setValueAtTime(150 + pitchVar, time);
@@ -182,12 +206,24 @@ function App() {
     ];
     let notes = chords[chordIndex % 4];
     if (barCount.current % 8 === 7) notes = notes.map(n => n * 1.5); 
+    
+    // MASTER CHORD FILTER (Target for LFO modulation)
+    // All notes go into this filter before hitting the mixer
+    const chordFilter = nodes.current.chordFilter;
+
     notes.forEach((freq, i) => {
-        const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = 'triangle'; 
+        const osc = ctx.createOscillator(); 
+        const gain = ctx.createGain(); 
+        osc.type = 'triangle'; 
+        
         const lfo = ctx.createOscillator(); lfo.frequency.value = 2; 
         const lfoGain = ctx.createGain(); lfoGain.gain.value = 2; 
         lfo.connect(lfoGain); lfoGain.connect(osc.frequency); lfo.start(time);
-        osc.frequency.value = freq; osc.connect(gain); gain.connect(nodes.current.mixer);
+        
+        osc.frequency.value = freq;
+        // CONNECT TO FILTER, NOT MIXER DIRECTLY
+        osc.connect(gain); gain.connect(chordFilter);
+        
         const strumDelay = i * 0.05 + (Math.random() * 0.02); const startTime = time + strumDelay;
         gain.gain.setValueAtTime(0, startTime);
         gain.gain.linearRampToValueAtTime(vol * 0.1, startTime + 0.1); 
@@ -209,13 +245,13 @@ function App() {
   // ENGINE LOGIC
   // =========================================================
   const startAmbientLayers = (ctx, dest) => {
-    // 1. Rain
+    // Rain
     const rainSrc = createPinkNoise(ctx);
     const rainGain = ctx.createGain(); rainGain.gain.value = volsRef.current.rain;
     rainSrc.connect(rainGain).connect(dest);
     rainSrc.start(0);
 
-    // 2. Drone
+    // Drone
     const osc1 = ctx.createOscillator(); osc1.type = 'sine';
     const osc2 = ctx.createOscillator(); osc2.type = 'triangle';
     const hour = new Date().getHours();
@@ -226,21 +262,21 @@ function App() {
     osc1.connect(droneFilter); osc2.connect(droneFilter); droneFilter.connect(droneGain).connect(dest);
     osc1.start(0); osc2.start(0);
 
-    // 3. Rumble
+    // Rumble
     const rumbleSrc = createPinkNoise(ctx);
     const rumbleFilter = ctx.createBiquadFilter(); rumbleFilter.type = 'lowpass'; rumbleFilter.frequency.value = 350;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = volsRef.current.rumble;
     rumbleSrc.connect(rumbleFilter).connect(rumbleGain).connect(dest);
     rumbleSrc.start(0);
 
-    // 4. Vinyl
+    // Vinyl
     const vinylSrc = createVinylCrackle(ctx);
     const vinylGain = ctx.createGain(); vinylGain.gain.value = volsRef.current.vinyl;
     const vinylFilter = ctx.createBiquadFilter(); vinylFilter.type = 'highpass'; vinylFilter.frequency.value = 2000;
     vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
     vinylSrc.start(0);
     
-    // 5. Fire
+    // Fire
     const fireSrc = createFireSound(ctx);
     const fireGain = ctx.createGain(); fireGain.gain.value = volsRef.current.fire;
     const fireFilter = ctx.createBiquadFilter(); fireFilter.type = 'lowpass'; fireFilter.frequency.value = 3000; 
@@ -294,11 +330,24 @@ function App() {
         nextNoteTime.current += 0.25 * secondsPerBeat + (isSwing ? swing : 0);
         current16thNote.current = (current16thNote.current + 1) % 16;
     }
+    
+    // SLOW MODULATION (Breathing)
+    driftOffset.current += 0.005; // Speed of breath
+    const breath = Math.sin(driftOffset.current);
+
+    // 1. Modulate Drone Volume
     if (nodes.current.drone) {
-        driftOffset.current += 0.001;
         const baseVol = volsRef.current.drone;
-        if(baseVol > 0) nodes.current.drone.gain.setTargetAtTime(Math.max(0, baseVol + Math.sin(driftOffset.current) * 0.1), audioCtx.current.currentTime, 0.1);
+        if(baseVol > 0) nodes.current.drone.gain.setTargetAtTime(Math.max(0, baseVol + breath * 0.05), audioCtx.current.currentTime, 0.1);
     }
+
+    // 2. Modulate Chord Filter (Opening and Closing) - NEW!
+    if (nodes.current.chordFilter) {
+        // Sweep between 200Hz and 1200Hz
+        const newFreq = 700 + (breath * 500); 
+        nodes.current.chordFilter.frequency.setTargetAtTime(newFreq, audioCtx.current.currentTime, 0.1);
+    }
+
     schedulerTimer.current = requestAnimationFrame(scheduler);
   }
 
@@ -308,18 +357,29 @@ function App() {
         const ctx = new Ctx()
         audioCtx.current = ctx
 
-        // --- MASTERING CHAIN START ---
+        // MASTERING CHAIN
         
-        // 1. Mixer (Everything connects here)
+        // 1. Mixer
         const mixer = ctx.createGain(); 
         nodes.current.mixer = mixer;
 
-        // 2. Soft Clipper (Saturation)
+        // 2. Chord Filter (Shared by all chords)
+        const chordFilter = ctx.createBiquadFilter();
+        chordFilter.type = 'lowpass';
+        chordFilter.frequency.value = 600; 
+        chordFilter.Q.value = 1;
+        chordFilter.connect(mixer);
+        nodes.current.chordFilter = chordFilter;
+
+        // 3. Bit Crusher (The "Lofi" Effect) - NEW!
+        const bitCrusher = createBitCrusher(ctx);
+        
+        // 4. Soft Clipper (Saturation)
         const distortion = ctx.createWaveShaper();
-        distortion.curve = makeDistortionCurve(50); // Amount of warmth
+        distortion.curve = makeDistortionCurve(50); 
         distortion.oversample = '4x';
 
-        // 3. Compressor (Glue)
+        // 5. Compressor (Glue)
         const compressor = ctx.createDynamicsCompressor();
         compressor.threshold.value = -24;
         compressor.knee.value = 30;
@@ -327,20 +387,19 @@ function App() {
         compressor.attack.value = 0.003;
         compressor.release.value = 0.25;
 
-        // 4. Analyser (Visuals)
+        // 6. Analyser
         const analyser = ctx.createAnalyser(); 
         analyser.fftSize = 2048;
         analyserRef.current = analyser;
 
-        // Route: Mixer -> Distortion -> Compressor -> Analyser -> Speakers
-        mixer.connect(distortion);
-        distortion.connect(compressor);
+        // Route: Mixer -> BitCrusher -> Distortion -> Compressor -> Analyser -> Speakers
+        mixer.connect(bitCrusher); // Crunch it first
+        bitCrusher.connect(distortion); // Then warm it
+        distortion.connect(compressor); // Then glue it
         compressor.connect(analyser);
         analyser.connect(ctx.destination);
         
-        // --- MASTERING CHAIN END ---
-
-        startAmbientLayers(ctx, mixer); // Pass Mixer, not Dest
+        startAmbientLayers(ctx, mixer);
         nextNoteTime.current = ctx.currentTime + 0.1;
         scheduler();
         setStarted(true)
