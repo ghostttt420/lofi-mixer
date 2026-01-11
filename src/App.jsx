@@ -191,29 +191,10 @@ function App() {
   }
 
   const playChord = (ctx, time, vol, chordIndex) => {
-    // NEW: Expanded Progression Library
     const progressions = [
-        // 0: The Classic (Major/Minor Mix)
-        [
-            [349.23, 440.00, 523.25, 659.25], // Fmaj7
-            [329.63, 392.00, 493.88, 587.33], // Em7
-            [293.66, 349.23, 440.00, 523.25], // Dm7
-            [261.63, 329.63, 392.00, 493.88]  // Cmaj7
-        ],
-        // 1: Nostalgic Eb Major (Misty)
-        [
-            [311.13, 392.00, 466.16, 587.33], // Ebmaj9
-            [349.23, 415.30, 523.25, 622.25], // Fm9
-            [233.08, 293.66, 349.23, 466.16], // Bb13
-            [311.13, 392.00, 466.16, 523.25]  // Ebmaj7
-        ],
-        // 2: Melancholic Minor (Darker)
-        [
-            [220.00, 261.63, 329.63, 392.00], // Am7
-            [196.00, 246.94, 293.66, 349.23], // Gmaj7
-            [349.23, 440.00, 523.25, 659.25], // Fmaj7
-            [164.81, 207.65, 246.94, 329.63]  // E7alt
-        ]
+        [[349.23, 440.00, 523.25, 659.25], [329.63, 392.00, 493.88, 587.33], [293.66, 349.23, 440.00, 523.25], [261.63, 329.63, 392.00, 493.88]],
+        [[311.13, 392.00, 466.16, 587.33], [349.23, 415.30, 523.25, 622.25], [233.08, 293.66, 349.23, 466.16], [311.13, 392.00, 466.16, 523.25]],
+        [[220.00, 261.63, 329.63, 392.00], [196.00, 246.94, 293.66, 349.23], [349.23, 440.00, 523.25, 659.25], [164.81, 207.65, 246.94, 329.63]]
     ];
 
     const currentProgIndex = Math.floor(barCount.current / 8) % progressions.length;
@@ -312,35 +293,28 @@ function App() {
     const humanize = (Math.random() * 0.015);
     const humanTime = time + humanize;
     const currentBar = barCount.current;
-    
-    // 4 Patterns
     const patternType = Math.floor(currentBar / 4) % 4; 
     
     if (currentVols.thunder > 0 && Math.random() < 0.01) triggerThunder(audioCtx.current, currentVols.thunder);
 
     if (currentVols.beats > 0) {
         if (patternType === 0) {
-            // Standard Boom Bap
             if (beatNumber === 0 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else if (patternType === 1) {
-             // Dilla / Syncopated
              if (beatNumber === 0 || beatNumber === 7 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else if (patternType === 2) {
-             // Late Night Swing
              if (beatNumber === 0 || beatNumber === 8) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0 || beatNumber === 15) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else {
-             // Minimal
              if (beatNumber === 0) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4) playSnare(audioCtx.current, humanTime, currentVols.beats); 
              if (Math.random() > 0.5) playHiHat(audioCtx.current, humanTime, currentVols.beats * 0.5);
         }
-
         if (currentBar % 4 === 3 && beatNumber > 12) playSnare(audioCtx.current, humanTime, currentVols.beats * 0.6); 
     }
 
@@ -486,38 +460,44 @@ function App() {
             lightningTrigger.current--;
         }
 
-        // --- UPDATED FIRE (Wide Spread + Additive Blending) ---
+        // --- FINAL FIRE: CLUMPED, FLUID, NO SPRINKLES ---
         if (vols.fire > 0) {
-            if (Math.random() < vols.fire * 0.5) { 
+            if (Math.random() < vols.fire * 0.8) { 
+                // Spawn heavier at bottom, slight spread
                 fireParticles.push({ 
-                    x: Math.random() * canvas.width, // CHANGED: Spread across entire width
-                    y: canvas.height + 10, 
-                    vx: (Math.random() - 0.5) * 0.5,
-                    vy: Math.random() * 2 + 1,
-                    size: Math.random() * 15 + 10, 
+                    x: Math.random() * canvas.width,
+                    y: canvas.height + 20, 
+                    vx: (Math.random() - 0.5) * 1.0, // More side wiggle
+                    vy: Math.random() * 4 + 2, // Faster up
+                    size: Math.random() * 30 + 20, // BIGGER particles to blur together
                     life: 1.0,
-                    decay: Math.random() * 0.02 + 0.01
+                    decay: Math.random() * 0.03 + 0.01
                 });
             }
 
-            ctx.globalCompositeOperation = 'lighter'; // Glow Effect
+            ctx.globalCompositeOperation = 'lighter'; // This creates the 'white hot' core
             
             fireParticles.forEach((p, i) => {
-                const r = 255;
-                const g = Math.floor(p.life * 200);
-                const b = Math.floor(p.life * 50);
-                
-                ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${p.life})`;
-                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+                let color;
+                // Heat Gradient Logic
+                if (p.life > 0.7) color = `rgba(255, 255, 100, ${p.life * 0.5})`; // White/Yellow Core
+                else if (p.life > 0.4) color = `rgba(255, 100, 0, ${p.life * 0.4})`; // Orange Body
+                else color = `rgba(100, 0, 0, ${p.life * 0.2})`; // Red/Smoke Top
 
+                ctx.fillStyle = color;
+                ctx.beginPath(); 
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); 
+                ctx.fill();
+
+                // Gas Fluid Physics
                 p.y -= p.vy; 
-                p.x += Math.sin(p.y * 0.05 + frameId * 0.02) * 0.5; 
-                p.size *= 0.98; 
+                p.x += Math.sin(frameId * 0.05 + p.y * 0.01) * 1.5; // Wavy heat rise
+                p.size *= 0.96; // Shrink fast like gas
                 p.life -= p.decay; 
 
                 if (p.life <= 0) fireParticles.splice(i, 1);
             });
-            ctx.globalCompositeOperation = 'source-over'; // Reset
+            ctx.globalCompositeOperation = 'source-over';
         }
 
         ctx.shadowBlur = 50; ctx.shadowColor = sunColor; ctx.fillStyle = sunColor; ctx.beginPath();
