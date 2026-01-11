@@ -58,7 +58,7 @@ function App() {
   // =========================================================
   
   const makeDistortionCurve = (amount) => {
-    const k = typeof amount === 'number' ? amount : 20; // Kept at 20 (Smooth)
+    const k = typeof amount === 'number' ? amount : 20; 
     const n_samples = 44100;
     const curve = new Float32Array(n_samples);
     const deg = Math.PI / 180;
@@ -216,11 +216,8 @@ function App() {
         ]
     ];
 
-    // Switch progression every 8 bars
     const currentProgIndex = Math.floor(barCount.current / 8) % progressions.length;
     let notes = progressions[currentProgIndex][chordIndex % 4];
-    
-    // Inversions for variety
     if (barCount.current % 4 === 3) notes = notes.map(n => n * 1.5); 
     
     const chordFilter = nodes.current.chordFilter;
@@ -246,8 +243,6 @@ function App() {
   }
 
   const playBass = (ctx, time, vol, chordIndex) => {
-    // Basic root notes (simplified for now to match any key roughly)
-    // A real bassist would follow the progression, but for Lofi drones, roots work fine.
     const roots = [87.31, 82.41, 73.42, 65.41]; 
     const freq = roots[chordIndex % 4];
     
@@ -262,13 +257,13 @@ function App() {
   // ENGINE LOGIC
   // =========================================================
   const startAmbientLayers = (ctx, dest) => {
-    // Rain
+    // 1. Rain
     const rainSrc = createPinkNoise(ctx);
     const rainGain = ctx.createGain(); rainGain.gain.value = volsRef.current.rain;
     rainSrc.connect(rainGain).connect(dest);
     rainSrc.start(0);
 
-    // Drone
+    // 2. Drone
     const osc1 = ctx.createOscillator(); osc1.type = 'sine';
     const osc2 = ctx.createOscillator(); osc2.type = 'triangle';
     const hour = new Date().getHours();
@@ -279,28 +274,28 @@ function App() {
     osc1.connect(droneFilter); osc2.connect(droneFilter); droneFilter.connect(droneGain).connect(dest);
     osc1.start(0); osc2.start(0);
 
-    // Rumble
+    // 3. Rumble
     const rumbleSrc = createPinkNoise(ctx);
     const rumbleFilter = ctx.createBiquadFilter(); rumbleFilter.type = 'lowpass'; rumbleFilter.frequency.value = 350;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = volsRef.current.rumble;
     rumbleSrc.connect(rumbleFilter).connect(rumbleGain).connect(dest);
     rumbleSrc.start(0);
 
-    // Vinyl
+    // 4. Vinyl
     const vinylSrc = createVinylCrackle(ctx);
     const vinylGain = ctx.createGain(); vinylGain.gain.value = volsRef.current.vinyl;
     const vinylFilter = ctx.createBiquadFilter(); vinylFilter.type = 'highpass'; vinylFilter.frequency.value = 2000;
     vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
     vinylSrc.start(0);
     
-    // Fire
+    // 5. Fire
     const fireSrc = createFireSound(ctx);
     const fireGain = ctx.createGain(); fireGain.gain.value = volsRef.current.fire;
     const fireFilter = ctx.createBiquadFilter(); fireFilter.type = 'lowpass'; fireFilter.frequency.value = 3000; 
     fireSrc.connect(fireFilter).connect(fireGain).connect(dest);
     fireSrc.start(0);
 
-    // Tape Hiss
+    // 6. Tape Hiss
     const hissSrc = createTapeHiss(ctx);
     const hissGain = ctx.createGain(); hissGain.gain.value = volsRef.current.hiss || 0;
     const hissFilter = ctx.createBiquadFilter(); hissFilter.type = 'lowpass'; hissFilter.frequency.value = 8000; 
@@ -318,7 +313,7 @@ function App() {
     const humanTime = time + humanize;
     const currentBar = barCount.current;
     
-    // NEW: 4 Patterns instead of 3
+    // 4 Patterns
     const patternType = Math.floor(currentBar / 4) % 4; 
     
     if (currentVols.thunder > 0 && Math.random() < 0.01) triggerThunder(audioCtx.current, currentVols.thunder);
@@ -335,12 +330,12 @@ function App() {
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else if (patternType === 2) {
-             // Late Night Swing (More hats)
+             // Late Night Swing
              if (beatNumber === 0 || beatNumber === 8) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0 || beatNumber === 15) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else {
-             // Minimal / Break
+             // Minimal
              if (beatNumber === 0) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4) playSnare(audioCtx.current, humanTime, currentVols.beats); 
              if (Math.random() > 0.5) playHiHat(audioCtx.current, humanTime, currentVols.beats * 0.5);
@@ -491,14 +486,11 @@ function App() {
             lightningTrigger.current--;
         }
 
-        // --- NEW REALISTIC FIRE ---
-        // Using "lighter" composite operation for glowing effect
+        // --- UPDATED FIRE (Wide Spread + Additive Blending) ---
         if (vols.fire > 0) {
-            // Spawn logic
             if (Math.random() < vols.fire * 0.5) { 
-                // X spread varies, Y starts at bottom
                 fireParticles.push({ 
-                    x: (Math.random() * canvas.width * 0.1) + (canvas.width * 0.45), // Centerish
+                    x: Math.random() * canvas.width, // CHANGED: Spread across entire width
                     y: canvas.height + 10, 
                     vx: (Math.random() - 0.5) * 0.5,
                     vy: Math.random() * 2 + 1,
@@ -508,29 +500,24 @@ function App() {
                 });
             }
 
-            ctx.globalCompositeOperation = 'lighter'; // GLOW MODE ON
+            ctx.globalCompositeOperation = 'lighter'; // Glow Effect
             
             fireParticles.forEach((p, i) => {
-                // Color shift based on life: Yellow -> Orange -> Red
                 const r = 255;
-                const g = Math.floor(p.life * 200); // Fades from 200 to 0
+                const g = Math.floor(p.life * 200);
                 const b = Math.floor(p.life * 50);
                 
                 ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${p.life})`;
-                ctx.beginPath(); 
-                ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); 
-                ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
 
-                // Physics
                 p.y -= p.vy; 
-                p.x += Math.sin(p.y * 0.05 + frameId * 0.02) * 0.5; // Wobble
-                p.size *= 0.98; // Shrink
+                p.x += Math.sin(p.y * 0.05 + frameId * 0.02) * 0.5; 
+                p.size *= 0.98; 
                 p.life -= p.decay; 
 
                 if (p.life <= 0) fireParticles.splice(i, 1);
             });
-            
-            ctx.globalCompositeOperation = 'source-over'; // RESET MODE
+            ctx.globalCompositeOperation = 'source-over'; // Reset
         }
 
         ctx.shadowBlur = 50; ctx.shadowColor = sunColor; ctx.fillStyle = sunColor; ctx.beginPath();
