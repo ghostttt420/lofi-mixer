@@ -4,6 +4,7 @@ import './App.css'
 function App() {
   const [started, setStarted] = useState(false)
   const [timeMode, setTimeMode] = useState('day') 
+  const [showControls, setShowControls] = useState(true) // NEW: Visibility State
   
   const [vols, setVols] = useState(() => {
     try {
@@ -40,6 +41,9 @@ function App() {
   const barCount = useRef(0) 
   const driftOffset = useRef(0) 
   const lightningTrigger = useRef(0)
+  
+  // NEW: Idle Timer Ref
+  const hideTimer = useRef(null)
 
   useEffect(() => {
     volsRef.current = vols
@@ -52,6 +56,39 @@ function App() {
         nodes.current.masterFilter.frequency.setTargetAtTime(frequency, audioCtx.current.currentTime, 0.1);
     }
   }, [vols])
+
+  // =========================================================
+  // NEW: AUTO-HIDE LOGIC
+  // =========================================================
+  const resetTimer = () => {
+    setShowControls(true)
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    // Hide after 4000ms (4 seconds)
+    hideTimer.current = setTimeout(() => {
+        if(started) setShowControls(false)
+    }, 4000)
+  }
+
+  useEffect(() => {
+    if (!started) return;
+    
+    // Attach listeners to detect activity
+    window.addEventListener('mousemove', resetTimer)
+    window.addEventListener('mousedown', resetTimer)
+    window.addEventListener('touchstart', resetTimer)
+    window.addEventListener('keydown', resetTimer)
+    
+    // Start the initial timer
+    resetTimer()
+
+    return () => {
+        if (hideTimer.current) clearTimeout(hideTimer.current)
+        window.removeEventListener('mousemove', resetTimer)
+        window.removeEventListener('mousedown', resetTimer)
+        window.removeEventListener('touchstart', resetTimer)
+        window.removeEventListener('keydown', resetTimer)
+    }
+  }, [started])
 
   // =========================================================
   // AUDIO DSP HELPERS 
@@ -226,13 +263,11 @@ function App() {
   // ENGINE LOGIC
   // =========================================================
   const startAmbientLayers = (ctx, dest) => {
-    // 1. Rain
     const rainSrc = createPinkNoise(ctx);
     const rainGain = ctx.createGain(); rainGain.gain.value = volsRef.current.rain;
     rainSrc.connect(rainGain).connect(dest);
     rainSrc.start(0);
 
-    // 2. Drone
     const osc1 = ctx.createOscillator(); osc1.type = 'sine';
     const osc2 = ctx.createOscillator(); osc2.type = 'triangle';
     const hour = new Date().getHours();
@@ -243,28 +278,24 @@ function App() {
     osc1.connect(droneFilter); osc2.connect(droneFilter); droneFilter.connect(droneGain).connect(dest);
     osc1.start(0); osc2.start(0);
 
-    // 3. Rumble
     const rumbleSrc = createPinkNoise(ctx);
     const rumbleFilter = ctx.createBiquadFilter(); rumbleFilter.type = 'lowpass'; rumbleFilter.frequency.value = 350;
     const rumbleGain = ctx.createGain(); rumbleGain.gain.value = volsRef.current.rumble;
     rumbleSrc.connect(rumbleFilter).connect(rumbleGain).connect(dest);
     rumbleSrc.start(0);
 
-    // 4. Vinyl
     const vinylSrc = createVinylCrackle(ctx);
     const vinylGain = ctx.createGain(); vinylGain.gain.value = volsRef.current.vinyl;
     const vinylFilter = ctx.createBiquadFilter(); vinylFilter.type = 'highpass'; vinylFilter.frequency.value = 2000;
     vinylSrc.connect(vinylFilter).connect(vinylGain).connect(dest);
     vinylSrc.start(0);
     
-    // 5. Fire
     const fireSrc = createFireSound(ctx);
     const fireGain = ctx.createGain(); fireGain.gain.value = volsRef.current.fire;
     const fireFilter = ctx.createBiquadFilter(); fireFilter.type = 'lowpass'; fireFilter.frequency.value = 3000; 
     fireSrc.connect(fireFilter).connect(fireGain).connect(dest);
     fireSrc.start(0);
 
-    // 6. Tape Hiss
     const hissSrc = createTapeHiss(ctx);
     const hissGain = ctx.createGain(); hissGain.gain.value = volsRef.current.hiss || 0;
     const hissFilter = ctx.createBiquadFilter(); hissFilter.type = 'lowpass'; hissFilter.frequency.value = 8000; 
@@ -287,22 +318,18 @@ function App() {
 
     if (currentVols.beats > 0) {
         if (patternType === 0) {
-            // Standard Boom Bap
             if (beatNumber === 0 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else if (patternType === 1) {
-             // Dilla / Syncopated
              if (beatNumber === 0 || beatNumber === 7 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else if (patternType === 2) {
-             // Late Night Swing
              if (beatNumber === 0 || beatNumber === 8) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0 || beatNumber === 15) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else {
-             // Minimal
              if (beatNumber === 0) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4) playSnare(audioCtx.current, humanTime, currentVols.beats); 
              if (Math.random() > 0.5) playHiHat(audioCtx.current, humanTime, currentVols.beats * 0.5);
@@ -328,7 +355,6 @@ function App() {
         current16thNote.current = (current16thNote.current + 1) % 16;
     }
     
-    // SLOW MODULATION
     driftOffset.current += 0.005; 
     const breath = Math.sin(driftOffset.current);
 
@@ -375,7 +401,6 @@ function App() {
         analyser.fftSize = 2048;
         analyserRef.current = analyser;
 
-        // CHANGED ROUTING: No Distortion Node
         mixer.connect(masterFilter); 
         masterFilter.connect(compressor);
         compressor.connect(analyser);
@@ -448,18 +473,16 @@ function App() {
             lightningTrigger.current--;
         }
 
-        // --- UPDATED FIRE: WIDE SPREAD, HEAVY INTENSITY ---
         if (vols.fire > 0) {
-            // More particles (2.5x spawn rate relative to volume)
             if (Math.random() < vols.fire * 2.5) { 
                 fireParticles.push({ 
                     x: Math.random() * canvas.width,
                     y: canvas.height + 20, 
                     vx: (Math.random() - 0.5) * 1.0, 
-                    vy: Math.random() * 5 + 3, // Faster rise (was 4+2)
-                    size: Math.random() * 60 + 40, // Much bigger (was 30+20)
+                    vy: Math.random() * 5 + 3, 
+                    size: Math.random() * 60 + 40, 
                     life: 1.0,
-                    decay: Math.random() * 0.02 + 0.005 // Slower decay for height
+                    decay: Math.random() * 0.02 + 0.005 
                 });
             }
 
@@ -546,7 +569,14 @@ function App() {
       {!started && ( <div className="overlay"><button className="btn-start" onClick={startEngine}>Start Lofi Station</button></div> )}
       {started && (
         <div className="app-container">
-          <div className="control-box">
+          <div 
+            className="control-box"
+            style={{ 
+                opacity: showControls ? 1 : 0, 
+                transition: 'opacity 0.5s ease',
+                pointerEvents: showControls ? 'auto' : 'none' 
+            }}
+          >
             <h1>Lofi Gen.</h1>
             <div className="subtitle">Phase: {timeMode} | BPM: {tempo}</div>
             
