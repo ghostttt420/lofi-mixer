@@ -19,8 +19,8 @@ function App() {
         vinyl: parsed.vinyl || 0,
         fire: parsed.fire || 0,
         thunder: parsed.thunder || 0,
-        hiss: parsed.hiss || 0,       // NEW: Tape Hiss
-        tone: parsed.tone || 1        // NEW: Master Tone (1 = Bright, 0 = Dark)
+        hiss: parsed.hiss || 0,       
+        tone: parsed.tone || 1        // 1 = Open/Bright, 0 = Closed/Dark
       }
     } catch (e) {
       return { rain: 0, drone: 0, rumble: 0, beats: 0, chords: 0, bass: 0, vinyl: 0, fire: 0, thunder: 0, hiss: 0, tone: 1 }
@@ -47,9 +47,12 @@ function App() {
     
     // LIVE UPDATE: Master Tone Filter
     if(nodes.current.masterFilter) {
-        // Map 0-1 slider to 200Hz-20000Hz logarithmic
-        // This allows you to "Roll off harsh highs" as requested
-        const frequency = 200 * Math.pow(100, vols.tone);
+        // Map 0-1 slider to 100Hz-20000Hz
+        // This lets you muffle the sound without "cracking" it
+        const minFreq = 100;
+        const maxFreq = 20000;
+        // Logarithmic feel for better control
+        const frequency = minFreq * Math.pow(maxFreq / minFreq, vols.tone);
         nodes.current.masterFilter.frequency.setTargetAtTime(frequency, audioCtx.current.currentTime, 0.1);
     }
   }, [vols])
@@ -58,8 +61,10 @@ function App() {
   // AUDIO DSP HELPERS 
   // =========================================================
   
+  // SOFT CLIPPER (Warmth, not Crunch)
+  // Reduced k from 50 to 20 for cleaner sound
   const makeDistortionCurve = (amount) => {
-    const k = typeof amount === 'number' ? amount : 50;
+    const k = typeof amount === 'number' ? amount : 20;
     const n_samples = 44100;
     const curve = new Float32Array(n_samples);
     const deg = Math.PI / 180;
@@ -68,29 +73,6 @@ function App() {
       curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
     }
     return curve;
-  }
-
-  const createBitCrusher = (ctx) => {
-    const bufferSize = 4096;
-    const scriptNode = ctx.createScriptProcessor(bufferSize, 1, 1);
-    scriptNode.bits = 8; 
-    scriptNode.normfreq = 0.1; 
-    let step = scriptNode.normfreq;
-    let phaser = 0;
-    let last = 0;
-    scriptNode.onaudioprocess = function(e) {
-        const input = e.inputBuffer.getChannelData(0);
-        const output = e.outputBuffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-            phaser += step;
-            if (phaser >= 1.0) {
-                phaser -= 1.0;
-                last = step * Math.floor(input[i] / step + 0.5);
-            }
-            output[i] = last;
-        }
-    };
-    return scriptNode;
   }
 
   const createPinkNoise = (ctx) => {
@@ -114,13 +96,12 @@ function App() {
     noise.buffer = buffer; noise.loop = true; return noise;
   }
 
-  // NEW: Pure White Noise for "Tape Hiss"
   const createTapeHiss = (ctx) => {
       const bufferSize = ctx.sampleRate * 2;
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.random() * 2 - 1; // Pure White Noise
+          data[i] = Math.random() * 2 - 1; 
       }
       const noise = ctx.createBufferSource();
       noise.buffer = buffer; noise.loop = true; return noise;
@@ -300,10 +281,10 @@ function App() {
     fireSrc.connect(fireFilter).connect(fireGain).connect(dest);
     fireSrc.start(0);
 
-    // 6. Tape Hiss (NEW)
+    // 6. Tape Hiss
     const hissSrc = createTapeHiss(ctx);
     const hissGain = ctx.createGain(); hissGain.gain.value = volsRef.current.hiss || 0;
-    const hissFilter = ctx.createBiquadFilter(); hissFilter.type = 'lowpass'; hissFilter.frequency.value = 8000; // Soft hiss
+    const hissFilter = ctx.createBiquadFilter(); hissFilter.type = 'lowpass'; hissFilter.frequency.value = 8000; 
     hissSrc.connect(hissFilter).connect(hissGain).connect(dest);
     hissSrc.start(0);
 
@@ -366,9 +347,8 @@ function App() {
         if(baseVol > 0) nodes.current.drone.gain.setTargetAtTime(Math.max(0, baseVol + breath * 0.05), audioCtx.current.currentTime, 0.1);
     }
 
-    // 2. Modulate Chord Filter (Opening and Closing) - NEW!
+    // 2. Modulate Chord Filter
     if (nodes.current.chordFilter) {
-        // Sweep between 200Hz and 1200Hz
         const newFreq = 700 + (breath * 500); 
         nodes.current.chordFilter.frequency.setTargetAtTime(newFreq, audioCtx.current.currentTime, 0.1);
     }
@@ -394,34 +374,32 @@ function App() {
         chordFilter.connect(mixer);
         nodes.current.chordFilter = chordFilter;
 
-        // 3. Bit Crusher (The "Lofi" Effect)
-        const bitCrusher = createBitCrusher(ctx);
-        
-        // 4. Soft Clipper (Saturation)
+        // 3. Soft Clipper (Warmth, tuned down to 20)
         const distortion = ctx.createWaveShaper();
-        distortion.curve = makeDistortionCurve(50); distortion.oversample = '4x';
+        distortion.curve = makeDistortionCurve(20); // Warm, not cracked
+        distortion.oversample = '4x';
 
-        // 5. MASTER FILTER (TONE CONTROL) - NEW
+        // 4. MASTER FILTER (TONE CONTROL)
         const masterFilter = ctx.createBiquadFilter();
         masterFilter.type = 'lowpass';
         masterFilter.frequency.value = 20000; // Start open
         masterFilter.Q.value = 0.5;
         nodes.current.masterFilter = masterFilter;
 
-        // 6. Compressor
+        // 5. Compressor
         const compressor = ctx.createDynamicsCompressor();
         compressor.threshold.value = -24; compressor.knee.value = 30; compressor.ratio.value = 12;
         compressor.attack.value = 0.003; compressor.release.value = 0.25;
 
-        // 7. Analyser
+        // 6. Analyser
         const analyser = ctx.createAnalyser(); 
         analyser.fftSize = 2048;
         analyserRef.current = analyser;
 
-        // Route: Mixer -> BitCrusher -> Distortion -> MasterFilter -> Compressor -> Analyser -> Speakers
-        mixer.connect(bitCrusher);
-        bitCrusher.connect(distortion);
-        distortion.connect(masterFilter); // NEW
+        // Route: Mixer -> Distortion -> MasterFilter -> Compressor -> Analyser -> Speakers
+        // (BitCrusher Removed)
+        mixer.connect(distortion);
+        distortion.connect(masterFilter); 
         masterFilter.connect(compressor);
         compressor.connect(analyser);
         analyser.connect(ctx.destination);
@@ -585,7 +563,6 @@ function App() {
             
             <div className="slider-group"> <div className="slider-label"><span>Rumble & Vinyl</span><span>{(vols.rumble * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.rumble} onChange={e => {handleVol('rumble', e.target.value); handleVol('vinyl', e.target.value); }} /> </div>
             
-            {/* NEW TAPE & TONE SLIDERS */}
             <div className="slider-group"> <div className="slider-label"><span>Tape Hiss</span><span>{(vols.hiss * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.hiss} onChange={e => handleVol('hiss', e.target.value)} /> </div>
             <div className="slider-group"> <div className="slider-label" style={{color: '#00ff00'}}><span>Master Tone (Filter)</span><span>{(vols.tone * 100).toFixed(0)}%</span></div> <input type="range" min="0" max="1" step="0.01" value={vols.tone} onChange={e => handleVol('tone', e.target.value)} /> </div>
 
