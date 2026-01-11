@@ -299,18 +299,22 @@ function App() {
 
     if (currentVols.beats > 0) {
         if (patternType === 0) {
+            // Standard Boom Bap
             if (beatNumber === 0 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
             if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else if (patternType === 1) {
+             // Dilla / Syncopated
              if (beatNumber === 0 || beatNumber === 7 || beatNumber === 10) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else if (patternType === 2) {
+             // Late Night Swing
              if (beatNumber === 0 || beatNumber === 8) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4 || beatNumber === 12) playSnare(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber % 2 === 0 || beatNumber === 15) playHiHat(audioCtx.current, humanTime, currentVols.beats);
         } else {
+             // Minimal
              if (beatNumber === 0) playKick(audioCtx.current, humanTime, currentVols.beats);
              if (beatNumber === 4) playSnare(audioCtx.current, humanTime, currentVols.beats); 
              if (Math.random() > 0.5) playHiHat(audioCtx.current, humanTime, currentVols.beats * 0.5);
@@ -460,39 +464,37 @@ function App() {
             lightningTrigger.current--;
         }
 
-        // --- FINAL FIRE: CLUMPED, FLUID, NO SPRINKLES ---
+        // --- UPDATED FIRE: MORE INTENSITY ---
         if (vols.fire > 0) {
-            if (Math.random() < vols.fire * 0.8) { 
-                // Spawn heavier at bottom, slight spread
+            // More particles (2.5x spawn rate relative to volume)
+            if (Math.random() < vols.fire * 2.5) { 
                 fireParticles.push({ 
                     x: Math.random() * canvas.width,
                     y: canvas.height + 20, 
-                    vx: (Math.random() - 0.5) * 1.0, // More side wiggle
-                    vy: Math.random() * 4 + 2, // Faster up
-                    size: Math.random() * 30 + 20, // BIGGER particles to blur together
+                    vx: (Math.random() - 0.5) * 1.0, 
+                    vy: Math.random() * 5 + 3, // Faster rise (was 4+2)
+                    size: Math.random() * 60 + 40, // Much bigger (was 30+20)
                     life: 1.0,
-                    decay: Math.random() * 0.03 + 0.01
+                    decay: Math.random() * 0.02 + 0.005 // Slower decay for height
                 });
             }
 
-            ctx.globalCompositeOperation = 'lighter'; // This creates the 'white hot' core
+            ctx.globalCompositeOperation = 'lighter'; 
             
             fireParticles.forEach((p, i) => {
                 let color;
-                // Heat Gradient Logic
-                if (p.life > 0.7) color = `rgba(255, 255, 100, ${p.life * 0.5})`; // White/Yellow Core
-                else if (p.life > 0.4) color = `rgba(255, 100, 0, ${p.life * 0.4})`; // Orange Body
-                else color = `rgba(100, 0, 0, ${p.life * 0.2})`; // Red/Smoke Top
+                if (p.life > 0.7) color = `rgba(255, 255, 100, ${p.life * 0.5})`; 
+                else if (p.life > 0.4) color = `rgba(255, 100, 0, ${p.life * 0.4})`; 
+                else color = `rgba(100, 0, 0, ${p.life * 0.2})`; 
 
                 ctx.fillStyle = color;
                 ctx.beginPath(); 
                 ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); 
                 ctx.fill();
 
-                // Gas Fluid Physics
                 p.y -= p.vy; 
-                p.x += Math.sin(frameId * 0.05 + p.y * 0.01) * 1.5; // Wavy heat rise
-                p.size *= 0.96; // Shrink fast like gas
+                p.x += Math.sin(frameId * 0.05 + p.y * 0.01) * 1.5; 
+                p.size *= 0.96; 
                 p.life -= p.decay; 
 
                 if (p.life <= 0) fireParticles.splice(i, 1);
