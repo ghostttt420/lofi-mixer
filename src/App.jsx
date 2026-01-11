@@ -57,18 +57,6 @@ function App() {
   // AUDIO DSP HELPERS 
   // =========================================================
   
-  const makeDistortionCurve = (amount) => {
-    const k = typeof amount === 'number' ? amount : 20; 
-    const n_samples = 44100;
-    const curve = new Float32Array(n_samples);
-    const deg = Math.PI / 180;
-    for (let i = 0; i < n_samples; ++i) {
-      const x = i * 2 / n_samples - 1;
-      curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
-    }
-    return curve;
-  }
-
   const createPinkNoise = (ctx) => {
     const bufferSize = 2 * ctx.sampleRate;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -373,10 +361,6 @@ function App() {
         chordFilter.connect(mixer);
         nodes.current.chordFilter = chordFilter;
 
-        const distortion = ctx.createWaveShaper();
-        distortion.curve = makeDistortionCurve(20); 
-        distortion.oversample = '4x';
-
         const masterFilter = ctx.createBiquadFilter();
         masterFilter.type = 'lowpass';
         masterFilter.frequency.value = 20000; 
@@ -391,8 +375,8 @@ function App() {
         analyser.fftSize = 2048;
         analyserRef.current = analyser;
 
-        mixer.connect(distortion);
-        distortion.connect(masterFilter); 
+        // CHANGED ROUTING: No Distortion Node
+        mixer.connect(masterFilter); 
         masterFilter.connect(compressor);
         compressor.connect(analyser);
         analyser.connect(ctx.destination);
@@ -464,7 +448,7 @@ function App() {
             lightningTrigger.current--;
         }
 
-        // --- UPDATED FIRE: MORE INTENSITY ---
+        // --- UPDATED FIRE: WIDE SPREAD, HEAVY INTENSITY ---
         if (vols.fire > 0) {
             // More particles (2.5x spawn rate relative to volume)
             if (Math.random() < vols.fire * 2.5) { 
